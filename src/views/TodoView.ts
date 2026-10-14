@@ -927,7 +927,7 @@ export class TodoView extends ItemView {
       const isMyday = activeViewNav === "myday" && !selectedListId;
       const isMonthlyPlan = activeViewNav === "plan" && this.activePlanKind === "month";
       const showAi = isMyday || isMonthlyPlan;
-      const isTaskView = !isMonthlyPlan && !isMyday && (activeViewNav === "all" || activeViewNav === "inbox" || !!selectedListId);
+      const isTaskView = activeViewNav === "all" || activeViewNav === "inbox" || !!selectedListId;
       this.aiBtnEl.style.display = showAi ? "" : "none";
       this.aiBtnEl.title = t("AI 推荐");
       this.filterBtnEl.style.display = isTaskView ? "" : "none";
