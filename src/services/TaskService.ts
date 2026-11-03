@@ -495,20 +495,22 @@ export class TaskService {
     if (changed) await this.save();
   }
 
-  /** 确保重复系列始终有当前或未来的未完成实例。 */
-  private async ensureRecurrenceInstances(): Promise<void> {
-    const today = localTodayStr();
+  /** 确保重复系列始终覆盖从今天开始的预生成窗口。 */
+  private async ensureRecurrenceInstances(): Promise<number> {
+    let created = 0;
     const groups = new Set(this.tasks
       .filter((task) => task.isRecurrenceSource && task.isRecurrenceTemplate && task.recurrence && task.recurrenceGroupId && !task.isDeleted)
       .map((task) => task.recurrenceGroupId as string));
     for (const groupId of groups) {
-      const instances = this.tasks.filter((task) => task.recurrenceGroupId === groupId && !task.isRecurrenceTemplate && !task.isDeleted);
-      const hasPending = instances.some((task) => {
-        const date = this.taskLocalDate(task);
-        return !task.isCompleted && !!date && date >= today;
-      });
-      if (!hasPending) await this.replenishInstances(groupId);
+      created += await this.replenishInstances(groupId);
     }
+    return created;
+  }
+
+  /** 在视图打开或跨日刷新时调用，修复已经耗尽的重复实例窗口。 */
+  async refreshRecurrenceInstances(): Promise<number> {
+    this.ensureLoaded();
+    return this.ensureRecurrenceInstances();
   }
 
   /** 设置重复规则。用户任务会转为内部模板，同时生成一个带日期的可执行实例。 */
@@ -666,10 +668,11 @@ export class TaskService {
   }
 
   /**
-   * 补充重复实例（完成一个实例后调用）
-   * 如果剩余未完成实例不足，从最远处继续生成
+   * 补充重复实例（完成实例、启动插件或跨日刷新时调用）。
+   * 始终保证从今天开始至少覆盖一个完整的预生成窗口，
+   * 不依赖用户是否完成了足够多的旧实例。
    */
-  async replenishInstances(groupId: string): Promise<void> {
+  async replenishInstances(groupId: string): Promise<number> {
     this.ensureLoaded();
     const instances = this.tasks.filter(
       t => t.recurrenceGroupId === groupId && !t.isRecurrenceTemplate && !t.isDeleted
@@ -677,15 +680,16 @@ export class TaskService {
     const source = this.tasks.find(
       t => t.recurrenceGroupId === groupId && t.isRecurrenceSource && !t.isDeleted
     );
-    if (!source || !source.recurrence) return;
+    if (!source || !source.recurrence) return 0;
 
-    const uncompleted = instances.filter(t => !t.isCompleted);
     const totalCount = getPreGenerateCount(source.recurrence);
-    const threshold = Math.max(1, Math.floor(totalCount / 3));
+    const today = parseLocalDate(localTodayStr());
+    const targetDate = new Date(today.y, today.m, today.d);
+    for (let i = 1; i < totalCount; i++) {
+      targetDate.setTime(getNextOccurrenceDate(targetDate, source.recurrence).getTime());
+    }
 
-    if (uncompleted.length >= threshold) return;
-
-    // 找到最远一个实例的 dueDate 作为起点（用 parseLocalDate 兼容 UTC/本地格式）
+    // 找到最远一个实例的 dueDate 作为起点（用 parseLocalDate 兼容 UTC/本地格式）。
     let latestDate: Date | null = null;
     for (const inst of instances) {
       if (inst.dueDate) {
@@ -703,11 +707,12 @@ export class TaskService {
         latestDate = new Date();
       }
     }
+    if (latestDate >= targetDate) return 0;
+
     const existingDates = new Set(
       instances.map((instance) => this.taskLocalDate(instance)).filter((date): date is string => !!date),
     );
 
-    const needCount = totalCount - uncompleted.length;
     // 计算 startDate/dueDate 偏移（天数）
     let startOffsetDays = 0;
     if (source.startDate && source.dueDate) {
@@ -716,8 +721,11 @@ export class TaskService {
       startOffsetDays = Math.round((new Date(s.y, s.m, s.d).getTime() - new Date(e.y, e.m, e.d).getTime()) / 86400000);
     }
 
-    for (let i = 0; i < needCount; i++) {
+    let createdCount = 0;
+    // 日期窗口可能因旧数据断档而需要跳过已存在日期；单调性检查避免坏规则造成死循环。
+    while (latestDate < targetDate) {
       const nextDue = getNextOccurrenceDate(latestDate, source.recurrence);
+      if (!Number.isFinite(nextDue.getTime()) || nextDue <= latestDate) break;
       latestDate.setTime(nextDue.getTime());
 
       if (source.recurrenceEndDate) {
@@ -766,10 +774,14 @@ export class TaskService {
 
       this.tasks.push(instance);
       existingDates.add(dueStr);
+      createdCount++;
     }
 
-    await this.save();
-    logger.info("Replenished instances for group:", groupId);
+    if (createdCount > 0) {
+      await this.save();
+      logger.info("Replenished instances for group:", groupId, "created:", createdCount);
+    }
+    return createdCount;
   }
 
   /**

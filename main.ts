@@ -34,6 +34,7 @@ export default class ObsidianTodoPlugin extends Plugin {
   activateList?: (listId: string) => Promise<void>;
   activatePlan?: (kind: any) => Promise<void>;
   showMobilePanel?: (panel: "nav" | "main" | "detail") => void;
+  private recurrenceRefreshInFlight = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -45,6 +46,16 @@ export default class ObsidianTodoPlugin extends Plugin {
     await this.recurrenceSeriesService.init();
     this.taskService = new TaskService(this.app.vault, this.settings.todoFolder, this.recurrenceSeriesService);
     await this.taskService.init();
+    this.registerInterval(window.setInterval(() => {
+      if (this.recurrenceRefreshInFlight) return;
+      this.recurrenceRefreshInFlight = true;
+      void this.taskService.refreshRecurrenceInstances()
+        .then(async (created) => {
+          if (created > 0) await this.refreshView();
+        })
+        .catch((error) => console.error("Failed to refresh recurring tasks:", error))
+        .finally(() => { this.recurrenceRefreshInFlight = false; });
+    }, 60 * 60 * 1000));
     await this.listService.init();
     this.tagService = new TagService(this.app.vault, this.settings.todoFolder);
     await this.tagService.init();

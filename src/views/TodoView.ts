@@ -157,6 +157,7 @@ export interface TodoPluginLike {
     getMyDay(): Task[];
     getInbox(defaultListId: string): Task[];
     getAll(): Task[];
+    refreshRecurrenceInstances(): Promise<number>;
     getByListId(listId: string): Task[];
     update(id: string, changes: Partial<Task>): Promise<Task | null>;
     syncRecurrenceSchedule(taskId: string, startDate: string | null, dueDate: string | null): Promise<number>;
@@ -335,6 +336,7 @@ export class TodoView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    await this.plugin.taskService.refreshRecurrenceInstances();
     const container = this.containerEl.children[1];
     container.empty();
     container.addClass("obsidian-todo-tab");
@@ -2881,6 +2883,16 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
 
         menu.addSeparator();
 
+        if (goal.planKind === "month" || (goal.planKind === "week" && kind === "month")) {
+          menu.addItem((item) =>
+            item
+              .setTitle(t("移动到周期..."))
+              .setIcon("calendar-range")
+              .onClick(() => this.showGoalPeriodMoveMenu(goal, kind)),
+          );
+          menu.addSeparator();
+        }
+
         // Status actions follow the current state.
         if (goal.status === "active") {
           menu.addItem((item) =>
@@ -4699,25 +4711,24 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       return Array.from(years).sort().flatMap((year) => getSubPeriodKeysForParent("year", year));
     }
     if (task.planKind === "week") {
-      const months = new Set<string>();
-      for (const item of this.plugin.taskService.getAll()) {
-        if (!item.isDeleted && item.planKind === "month" && item.planPeriodKey) months.add(item.planPeriodKey);
-      }
-      months.add(currentPeriodKey("month"));
-      return Array.from(months).sort().flatMap((month) => getSubPeriodKeysForParent("month", month));
+      const parent = this.plugin.taskService.getParentOf(task.id);
+      const monthKey = parent?.planKind === "month" && parent.planPeriodKey
+        ? parent.planPeriodKey
+        : getParentPeriodKey("week", task.planPeriodKey ?? "");
+      return monthKey ? getSubPeriodKeysForParent("month", monthKey) : [];
     }
     return [];
   }
 
   private async movePlanTask(task: Task, targetKey: string, currentView: ViewNav | "list" | "trash" | "schedule" | "review"): Promise<void> {
     if (!task.planKind || (task.planKind !== "quarter" && task.planKind !== "week")) return;
-    const parentKind: PlanKind = task.planKind === "quarter" ? "year" : "month";
-    const parentKey = getParentPeriodKey(task.planKind, targetKey);
-    const parent = parentKey ? this.plugin.taskService.getByPlanKindAndPeriod(parentKind, parentKey)[0] : undefined;
-    await this.plugin.taskService.update(task.id, {
-      planPeriodKey: targetKey,
-      parentId: parent?.id,
-    });
+    const changes: Partial<Task> = { planPeriodKey: targetKey };
+    if (task.planKind === "quarter") {
+      const parentKey = getParentPeriodKey("quarter", targetKey);
+      const parent = parentKey ? this.plugin.taskService.getByPlanKindAndPeriod("year", parentKey)[0] : undefined;
+      changes.parentId = parent?.id;
+    }
+    await this.plugin.taskService.update(task.id, changes);
     await this.renderLists();
     if (currentView === "plan") {
       if (this.activePlanKind === "year" || this.activePlanKind === "month") {
@@ -4728,6 +4739,46 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     } else {
       await this.renderTasks(currentView);
     }
+  }
+
+  private getGoalPeriodMoveOptions(goal: Task): string[] {
+    if (goal.planKind === "month") {
+      const parent = this.plugin.taskService.getParentOf(goal.id);
+      const quarterKey = parent?.planKind === "quarter" && parent.planPeriodKey
+        ? parent.planPeriodKey
+        : getParentPeriodKey("month", goal.planPeriodKey ?? "");
+      if (!quarterKey) return [];
+      const [yearPart, quarterPart] = quarterKey.split("-Q");
+      const year = Number(yearPart);
+      const quarter = Number(quarterPart);
+      if (!Number.isInteger(year) || !Number.isInteger(quarter) || quarter < 1 || quarter > 4) return [];
+      return [0, 1, 2].map((offset) => {
+        const month = (quarter - 1) * 3 + offset + 1;
+        return `${year}-${String(month).padStart(2, "0")}`;
+      });
+    }
+    if (goal.planKind === "week") return this.getPlanMoveOptions(goal);
+    return [];
+  }
+
+  private async moveGoalToPeriod(goal: Task, targetKey: string, dashboardKind: "year" | "month"): Promise<void> {
+    if (goal.planKind !== "month" && goal.planKind !== "week") return;
+    await this.plugin.taskService.update(goal.id, { planPeriodKey: targetKey });
+    await this.renderLists();
+    await this.renderGoalDashboard(dashboardKind);
+  }
+
+  private showGoalPeriodMoveMenu(goal: Task, dashboardKind: "year" | "month"): void {
+    const submenu = new Menu();
+    for (const key of this.getGoalPeriodMoveOptions(goal)) {
+      const kind = goal.planKind as "month" | "week";
+      submenu.addItem((item) => item
+        .setTitle(kind === "month" ? this.localizedPeriodLabel("month", key) : this.localizedSubGroupLabel("week", key))
+        .setIcon(kind === "month" ? "calendar-days" : "calendar-range")
+        .setChecked(goal.planPeriodKey === key)
+        .onClick(() => { void this.moveGoalToPeriod(goal, key, dashboardKind); }));
+    }
+    submenu.showAtPosition({ x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) });
   }
 
   private showMovePlanMenu(task: Task, currentView: ViewNav | "list" | "trash" | "schedule" | "review"): void {

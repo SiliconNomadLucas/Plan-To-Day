@@ -77,6 +77,7 @@ const translations: Record<string, string> = {
   "移动到列表...": "Move to list...",
   "移动到季度...": "Move to quarter...",
   "移动到周...": "Move to week...",
+  "移动到周期...": "Move to period...",
   "添加到我的计划": "Add to My Plans",
   "添加到本周计划": "Add to This Week's Plan",
   "添加到本月计划": "Add to This Month's Plan",
