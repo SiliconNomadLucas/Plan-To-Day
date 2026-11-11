@@ -70,3 +70,15 @@ an older supported Obsidian release and 1.13+, verify language changes and
 tag editing, and confirm that clearing/resetting data still requires explicit
 confirmation. The local Obsidian window was minimized during this pass, so
 desktop visual smoke testing remains outstanding.
+
+## 0.1.4 scanner follow-up
+
+The 0.1.4 scanner still rejected direct references to `update()` and
+`setDestructive()` despite runtime `typeof` guards. The next patch resolves
+those methods through `Reflect.get`, checks that each result is callable, and
+invokes it with the original receiver. The same guarded dispatch covers the
+legacy `display()` and `setWarning()` fallbacks; the minimum supported version
+remains 1.7.2. A scoped ESLint rule now rejects direct access to these four
+methods in `src/settings.ts`, since the previous local unsupported-API rule
+did not catch the guarded calls. Re-run the community scanner on a new release;
+do not replace the published 0.1.4 assets.

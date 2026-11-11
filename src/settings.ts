@@ -181,8 +181,15 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
   }
 
   private refreshSettings(): void {
-    if (typeof this.update === "function") this.update();
-    else this.display();
+    // Resolve host methods at runtime: update() does not exist before Obsidian 1.13.
+    const update: unknown = Reflect.get(this, "update");
+    if (typeof update === "function") {
+      Reflect.apply(update, this, []);
+      return;
+    }
+    const display: unknown = Reflect.get(this, "display");
+    if (typeof display !== "function") throw new Error("Settings refresh is unavailable");
+    Reflect.apply(display, this, []);
   }
 
   private async changeLanguage(language: TodoLanguage): Promise<void> {
@@ -215,8 +222,16 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
   }
 
   private markDestructive(button: ButtonComponent): ButtonComponent {
-    if (typeof button.setDestructive === "function") return button.setDestructive();
-    return button.setWarning();
+    // setDestructive() is new in 1.13; older hosts only provide setWarning().
+    const modern: unknown = Reflect.get(button, "setDestructive");
+    if (typeof modern === "function") {
+      Reflect.apply(modern, button, []);
+      return button;
+    }
+    const legacy: unknown = Reflect.get(button, "setWarning");
+    if (typeof legacy !== "function") throw new Error("Destructive button styling is unavailable");
+    Reflect.apply(legacy, button, []);
+    return button;
   }
 
   private async clearTasks(): Promise<void> {

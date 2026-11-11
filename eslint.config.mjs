@@ -31,4 +31,16 @@ export default [
       "no-empty": "error",
     },
   },
+  {
+    files: ["src/settings.ts"],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        { selector: "MemberExpression[computed=false][object.type='ThisExpression'][property.name='update']", message: "Use a runtime capability check for Obsidian 1.13+ settings refresh." },
+        { selector: "MemberExpression[computed=false][object.type='ThisExpression'][property.name='display']", message: "Use the guarded legacy settings fallback." },
+        { selector: "MemberExpression[computed=false][property.name='setDestructive']", message: "Use a runtime capability check for Obsidian 1.13+ destructive styling." },
+        { selector: "MemberExpression[computed=false][property.name='setWarning']", message: "Use the guarded legacy destructive styling fallback." },
+      ],
+    },
+  },
 ];

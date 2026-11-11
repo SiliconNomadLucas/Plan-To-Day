@@ -1,6 +1,6 @@
 {
   "name": "plan-to-day",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Plan long-term goals and daily tasks with lists, schedules, recurring tasks, and reviews",
   "main": "main.js",
   "scripts": {
