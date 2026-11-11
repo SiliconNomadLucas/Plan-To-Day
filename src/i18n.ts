@@ -157,7 +157,7 @@ const translations: Record<string, string> = {
   "新手引导": "Quick guide",
   "查看插件功能介绍": "Review a brief tour of the plugin features",
   "重新打开新手引导": "Reopen quick guide",
-  "欢迎使用 Obsidian Todo": "Welcome to Obsidian Todo",
+  "欢迎使用 Plan to Day": "Welcome to Plan to Day",
   "逐层拆解计划": "Break plans into steps",
   "父子任务": "Parent and child tasks",
   "日程与重复任务": "Schedule and recurring tasks",

@@ -144,7 +144,7 @@ import { openPluginSettings } from "../utils/obsidian-settings";
 
 export type ViewNav = "myday" | "all" | "inbox" | "plan" | "schedule" | "review" | "trash";
 
-export const VIEW_TYPE_TODO = "obsidian-todo-view";
+export const VIEW_TYPE_TODO = "plan-to-day-view";
 
 
 
@@ -397,7 +397,7 @@ export class TodoView extends ItemView {
   }
 
   getDisplayText(): string {
-    return "Obsidian Todo";
+    return "Plan to Day";
   }
 
   getIcon(): string {
@@ -408,7 +408,7 @@ export class TodoView extends ItemView {
     await this.plugin.taskService.refreshRecurrenceInstances();
     const container = this.containerEl.children[1];
     container.empty();
-    container.addClass("obsidian-todo-tab");
+    container.addClass("plan-to-day-tab");
 
     const layout = container.createDiv({ cls: "todo-layout" });
     this.layoutEl = layout;
@@ -588,7 +588,7 @@ export class TodoView extends ItemView {
     const settingsBtn = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });
     setIcon(settingsBtn, "settings");
         settingsBtn.addEventListener("click", () => {
-      if (this.plugin.app) openPluginSettings(this.plugin.app, "obsidian-todo");
+      if (this.plugin.app) openPluginSettings(this.plugin.app, "plan-to-day");
     });
     // Trash button
     this.navEls["review"] = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });

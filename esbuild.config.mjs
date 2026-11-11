@@ -2,7 +2,7 @@ import esbuild from "esbuild";
 import process from "process";
 import builtins from "builtin-modules";
 
-const banner = "/* GENERATED/BUNDLED FILE BY ESBUILD. Source: https://github.com/Weitanaii/Obsidian-Todo */";
+const banner = "/* GENERATED/BUNDLED FILE BY ESBUILD. Source: https://github.com/SiliconNomadLucas/Obsidian-Todo */";
 
 const prod = process.argv[2] === "production";
 

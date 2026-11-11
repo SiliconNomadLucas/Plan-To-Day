@@ -1,4 +1,4 @@
-.obsidian-todo-tab {
+.plan-to-day-tab {
   display: flex;
   flex-direction: row;
   height: 100%;
@@ -4419,7 +4419,7 @@
   }
 }
 
-.is-mobile .obsidian-todo-nav-sidebar{display:none!important}
+.is-mobile .plan-to-day-nav-sidebar{display:none!important}
 
 .todo-onboarding{width:min(90vw,460px)}
 .todo-onboarding-brand{font-size:var(--font-ui-small);color:var(--text-muted);margin-bottom:8px}

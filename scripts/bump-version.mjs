@@ -60,4 +60,4 @@ for (const file of files) {
   fs.writeFileSync(path.join(root, file.filename), contents, "utf8");
 }
 
-console.log(`Version updated from ${currentVersion} to ${nextVersion}. Commit the changes, then tag the commit as v${nextVersion}.`);
+console.log(`Version updated from ${currentVersion} to ${nextVersion}. Commit the changes, then tag the commit as ${nextVersion}.`);

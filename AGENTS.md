@@ -1,4 +1,4 @@
-# AGENTS.md - Obsidian Todo Plugin
+# AGENTS.md - Plan to Day Plugin
 
 ## 铁律（必须遵守）
 

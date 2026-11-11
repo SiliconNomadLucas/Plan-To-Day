@@ -5,7 +5,7 @@ import type { PlanKind } from "../models/Task";
 import { localizeDom, t } from "../i18n";
 import { openPluginSettings } from "../utils/obsidian-settings";
 
-export const VIEW_TYPE_TODO_NAV = "obsidian-todo-nav";
+export const VIEW_TYPE_TODO_NAV = "plan-to-day-nav";
 
 export class TodoNavView extends ItemView {
   private plugin: ObsidianTodoPlugin;
@@ -196,7 +196,7 @@ export class TodoNavView extends ItemView {
     setIcon(settingsBtn, "settings");
     settingsBtn.title = "设置";
     settingsBtn.addEventListener("click", () => {
-      openPluginSettings(this.app, "obsidian-todo");
+      openPluginSettings(this.app, "plan-to-day");
     });
 
     const reviewBtn = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });

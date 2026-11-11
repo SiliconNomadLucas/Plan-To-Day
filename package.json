@@ -1,5 +1,5 @@
 {
-  "name": "obsidian-todo",
+  "name": "plan-to-day",
   "version": "0.1.1",
   "description": "A Microsoft To-Do style task management plugin for Obsidian",
   "main": "main.js",

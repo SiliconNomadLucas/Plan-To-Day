@@ -22,6 +22,7 @@ import { setLanguage } from "./src/i18n";
 import type { ViewNav } from "./src/views/TodoView";
 import type { PlanKind } from "./src/models/Task";
 import { OnboardingModal } from "./src/ui/OnboardingModal";
+import { loadLegacySettings } from "./src/utils/legacy-settings";
 
 export default class ObsidianTodoPlugin extends Plugin {
   settings: ObsidianTodoSettings;
@@ -43,7 +44,7 @@ export default class ObsidianTodoPlugin extends Plugin {
   async onload(): Promise<void> {
     await this.loadSettings();
     setLanguage(this.settings.language);
-    logger.info("Obsidian Todo loaded");
+    logger.info("Plan to Day loaded");
 
     this.listService = new ListService(this.app.vault, this.settings.todoFolder, this.settings.defaultListName);
     this.recurrenceSeriesService = new RecurrenceSeriesService(this.app.vault, this.settings.todoFolder);
@@ -77,13 +78,13 @@ export default class ObsidianTodoPlugin extends Plugin {
     this.registerView(VIEW_TYPE_TODO_NAV, (leaf) => new TodoNavView(leaf, this));
     this.registerView(VIEW_TYPE_TODO_DETAIL, (leaf) => new TodoDetailSidebarView(leaf, this));
 
-    this.addRibbonIcon("check-square", "Obsidian Todo", async () => {
+    this.addRibbonIcon("check-square", "Plan to Day", async () => {
       await this.activateView();
     });
 
     this.addCommand({
       id: "open-todo-tab",
-      name: "Open Obsidian Todo",
+      name: "Open Plan to Day",
       callback: async () => {
         await this.activateView();
       },
@@ -132,7 +133,7 @@ export default class ObsidianTodoPlugin extends Plugin {
   }
 
   onunload(): void {
-    logger.info("Obsidian Todo unloaded");
+    logger.info("Plan to Day unloaded");
   }
 
   /** 全部重置：清空内存数据 → 删除磁盘文件（绕过 Vault 缓存）→ 重新初始化 → 刷新视图 */
@@ -222,8 +223,13 @@ export default class ObsidianTodoPlugin extends Plugin {
 
   async loadSettings(): Promise<void> {
     const savedSettings = await this.loadData();
-    this.freshInstall = !savedSettings || Object.keys(savedSettings).length === 0;
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, savedSettings);
+    const hasSavedSettings = savedSettings && Object.keys(savedSettings).length > 0;
+    const legacySettings = hasSavedSettings
+      ? null
+      : await loadLegacySettings(this.app.vault.adapter, this.app.vault.configDir);
+    this.freshInstall = !hasSavedSettings && !legacySettings;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, legacySettings, savedSettings);
+    if (legacySettings) await this.saveSettings();
 
     if (this.settings.sortConfig && (this.settings.sortConfig.primary.field as string) === "manual") {
       this.settings.sortConfig = {

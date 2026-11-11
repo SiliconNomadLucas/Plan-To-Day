@@ -96,7 +96,7 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
 
     // --- Header ---
     const head = containerEl.createDiv("todo-settings-head");
-    head.createDiv({ cls: "todo-settings-title", text: "Obsidian Todo" });
+    head.createDiv({ cls: "todo-settings-title", text: "Plan to Day" });
     head.createDiv({ cls: "todo-settings-sub", text: t("任务管理插件设置") });
 
     // --- Basic Settings ---

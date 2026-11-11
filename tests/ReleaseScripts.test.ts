@@ -8,7 +8,7 @@ const projectRoot = process.cwd();
 const temporaryDirectories: string[] = [];
 
 function createFixture(): string {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "obsidian-todo-release-"));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "plan-to-day-release-"));
   temporaryDirectories.push(directory);
   fs.mkdirSync(path.join(directory, "scripts"));
   fs.copyFileSync(
@@ -21,19 +21,19 @@ function createFixture(): string {
   );
 
   const manifest = {
-    id: "obsidian-todo",
+    id: "plan-to-day",
     version: "0.1.1",
     minAppVersion: "1.0.0",
   };
   fs.writeFileSync(path.join(directory, "package.json"), JSON.stringify({
-    name: "obsidian-todo",
+    name: "plan-to-day",
     version: "0.1.1",
     main: "main.js",
   }));
   fs.writeFileSync(path.join(directory, "package-lock.json"), JSON.stringify({
-    name: "obsidian-todo",
+    name: "plan-to-day",
     version: "0.1.1",
-    packages: { "": { name: "obsidian-todo", version: "0.1.1" } },
+    packages: { "": { name: "plan-to-day", version: "0.1.1" } },
   }));
   fs.writeFileSync(path.join(directory, "manifest.json"), JSON.stringify(manifest));
   fs.writeFileSync(path.join(directory, "versions.json"), JSON.stringify({ "0.1.1": "1.0.0" }));
@@ -76,10 +76,15 @@ describe("release scripts", () => {
   it("validates release artifacts and rejects a tag that disagrees with the manifest", () => {
     const directory = createFixture();
 
-    expect(runScript(directory, "validate-release.mjs").status).toBe(0);
+    expect(runScript(directory, "validate-release.mjs", [], {
+      ...process.env,
+      GITHUB_REF_TYPE: "tag",
+      GITHUB_REF_NAME: "0.1.1",
+    }).status).toBe(0);
     const wrongTag = runScript(directory, "validate-release.mjs", [], {
       ...process.env,
-      GITHUB_REF_NAME: "v0.1.2",
+      GITHUB_REF_TYPE: "tag",
+      GITHUB_REF_NAME: "v0.1.1",
     });
     expect(wrongTag.status).not.toBe(0);
     expect(wrongTag.stderr).toContain("does not match manifest version");

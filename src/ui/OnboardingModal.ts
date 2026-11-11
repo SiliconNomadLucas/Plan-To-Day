@@ -50,7 +50,7 @@ export class OnboardingModal extends Modal {
   private renderStep(): void {
     this.contentEl.empty();
     const step = STEPS[this.stepIndex];
-    this.contentEl.createDiv({ cls: "todo-onboarding-brand", text: t("欢迎使用 Obsidian Todo") });
+    this.contentEl.createDiv({ cls: "todo-onboarding-brand", text: t("欢迎使用 Plan to Day") });
     this.contentEl.createDiv({ cls: "todo-onboarding-progress", text: `${t("步骤")} ${this.stepIndex + 1} / ${STEPS.length}` });
     this.contentEl.createEl("h2", { cls: "todo-onboarding-title", text: t(step.title) });
     this.contentEl.createDiv({ cls: "todo-onboarding-body", text: t(step.body) });

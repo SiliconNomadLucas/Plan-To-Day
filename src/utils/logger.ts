@@ -8,7 +8,7 @@ export enum LogLevel {
 class Logger {
   
   private level: LogLevel = LogLevel.INFO;
-  private prefix = "[ObsidianTodo]";
+  private prefix = "[PlanToDay]";
 
   
   setLevel(level: LogLevel): void {

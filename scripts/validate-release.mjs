@@ -26,6 +26,10 @@ if (packageJson.name !== manifest.id) {
   fail(`package name (${packageJson.name}) does not match manifest id (${manifest.id})`);
 }
 
+if (packageLock.name !== packageJson.name || packageLock.packages?.[""]?.name !== packageJson.name) {
+  fail(`package-lock.json name does not match ${packageJson.name}`);
+}
+
 if (packageJson.main !== "main.js") {
   fail(`package main entry (${packageJson.main}) must be main.js`);
 }
@@ -51,8 +55,8 @@ for (const filename of ["main.js", "manifest.json", "styles.css"]) {
   }
 }
 
-const tag = process.env.GITHUB_REF_NAME;
-if (tag?.startsWith("v") && tag.slice(1) !== manifest.version) {
+const tag = process.env.GITHUB_REF_TYPE === "tag" ? process.env.GITHUB_REF_NAME : null;
+if (tag && tag !== manifest.version) {
   fail(`tag ${tag} does not match manifest version ${manifest.version}`);
 }
 

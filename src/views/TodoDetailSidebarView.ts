@@ -1,7 +1,7 @@
 import { ItemView, WorkspaceLeaf } from "obsidian";
 import type ObsidianTodoPlugin from "../../main";
 
-export const VIEW_TYPE_TODO_DETAIL = "obsidian-todo-detail";
+export const VIEW_TYPE_TODO_DETAIL = "plan-to-day-detail";
 
 /** Hosts the same task/AI detail UI in Obsidian's mobile right sidebar. */
 export class TodoDetailSidebarView extends ItemView {

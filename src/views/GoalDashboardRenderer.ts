@@ -431,7 +431,7 @@ export class GoalDashboardRenderer {
                   // Re-render the dashboard (preserves expanded state via expandedGoalIds)
                   window.setTimeout(() => { void this.renderGoalDashboard(kind, true); }, 0);
                 } catch (e) {
-                  console.error("[ObsidianTodo] Failed to create KR:", e);
+                  console.error("[PlanToDay] Failed to create KR:", e);
                 }
               };
               input.addEventListener("keydown", (e) => {
