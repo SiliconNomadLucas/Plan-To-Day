@@ -7,7 +7,7 @@ export enum LogLevel {
 
 class Logger {
   
-  private level: LogLevel = LogLevel.INFO;
+  private level: LogLevel = LogLevel.ERROR;
   private prefix = "[PlanToDay]";
 
   
@@ -25,7 +25,7 @@ class Logger {
   
   info(...args: unknown[]): void {
     if (this.level <= LogLevel.INFO) {
-      console.info(this.prefix, ...args);
+      console.debug(this.prefix, ...args);
     }
   }
 

@@ -244,7 +244,7 @@ export default class ObsidianTodoPlugin extends Plugin {
       await this.saveSettings();
     }
     const levels: Record<string, LogLevel> = { DEBUG: LogLevel.DEBUG, INFO: LogLevel.INFO, WARN: LogLevel.WARN, ERROR: LogLevel.ERROR };
-    logger.setLevel(levels[this.settings.logLevel] ?? LogLevel.INFO);
+    logger.setLevel(levels[this.settings.logLevel] ?? LogLevel.ERROR);
   }
 
   async saveSettings(): Promise<void> {

@@ -34,17 +34,39 @@ correct behavior.
 - `styles.css` parses with esbuild and contains no `!important`, `all: unset`,
   or custom WebKit scrollbar declarations. Mobile stat-card overrides were
   consolidated. This is a source check, not a substitute for theme/device QA.
-- `npm run release:check` passes (101 tests) and release metadata is consistent
-  at 0.1.3. The local vault plugin copy was SHA-256-verified; `data.json` was
-  not modified. No tag or public release has been created.
+- At that stage, `npm run release:check` passed (101 tests) and release
+  metadata was consistent at 0.1.3. The local vault plugin copy was
+  SHA-256-verified; `data.json` was not modified.
 
-The settings tab deliberately retains `display()` for the declared Obsidian
+The settings tab originally retained `display()` for the declared Obsidian
 minimum of 1.7.2. The declarative `getSettingDefinitions()` API starts in
 1.13.0; replacing the existing tab outright would drop older-version support.
-The scanner's settings-search/deprecation recommendation remains open until
-an explicit compatibility design and test matrix are implemented.
 
 Desktop visual smoke testing could not be completed because the running
 Obsidian window was minimized and the UI capture could not bind to it. Mobile
 light/dark theme and touch-interaction testing still requires a real device.
 Run those checks before publishing the new tag.
+
+## Settings API follow-up after the 0.1.3 scan
+
+- `getSettingDefinitions()` now indexes the actual settings, including the
+  custom birthday, tag, onboarding, and data-management rows. On 1.13+,
+  `update()` refreshes the definitions after language, tag, or data changes.
+  The imperative `display()` remains a guarded fallback for 1.7.2-1.12.x.
+- Destructive actions use `setDestructive()` when available and fall back to
+  `setWarning()` on older hosts; their confirmation dialogs remain in place.
+  Static scans may still report the single fallback calls as deprecated.
+- New installs default to ERROR logging; INFO is emitted through the debug
+  console channel when the INFO setting is active. Existing saved log levels
+  are preserved rather than silently overwritten.
+- Local checks pass with 108 tests and the existing unsupported-API lint gate
+  in the 0.1.4 working tree.
+  Tests cover declarative definitions, control persistence, guarded fallback,
+  button styling, and default logging. A scanner re-run and real-device
+  testing have not yet been performed for this follow-up.
+
+Before publishing the next version, open the settings tab and search on both
+an older supported Obsidian release and 1.13+, verify language changes and
+tag editing, and confirm that clearing/resetting data still requires explicit
+confirmation. The local Obsidian window was minimized during this pass, so
+desktop visual smoke testing remains outstanding.

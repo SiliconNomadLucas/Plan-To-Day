@@ -593,10 +593,20 @@
   align-items: center;
   justify-content: center;
   width: 28px;
+  min-width: 28px;
   height: 28px;
+  padding: 0;
+  box-sizing: border-box;
+  flex: 0 0 28px;
   border-radius: var(--radius-s);
   color: var(--text-muted);
   cursor: pointer;
+}
+.todo-detail-header .todo-detail-close svg {
+  display: block;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }
 .todo-detail-header .todo-detail-close:hover {
   background: var(--background-modifier-hover);
@@ -1444,6 +1454,15 @@
 .todo-setting-tag-group {
   margin-bottom: 20px;
   padding: 0 0.85rem;
+}
+
+.todo-declarative-tag-setting {
+  display: block;
+}
+
+.todo-declarative-tag-setting > .setting-item-info,
+.todo-declarative-tag-setting > .setting-item-control {
+  display: none;
 }
 
 .todo-setting-tag-group-title {

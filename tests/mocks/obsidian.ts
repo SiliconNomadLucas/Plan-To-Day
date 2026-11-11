@@ -233,3 +233,25 @@ export class Notice {
 }
 
 export function setIcon(_element: unknown, _icon: string): void {}
+
+export class PluginSettingTab {
+  containerEl = new TestElement();
+
+  constructor(_app: unknown, _plugin: unknown) {}
+
+  display(): void {}
+  update(): void {}
+}
+
+export class Setting {
+  settingEl: TestElement;
+  controlEl: TestElement;
+
+  constructor(parent: TestElement) {
+    this.settingEl = parent.createDiv({ cls: "setting-item" });
+    this.controlEl = this.settingEl.createDiv({ cls: "setting-item-control" });
+  }
+
+  setName(_name: string): this { return this; }
+  setDesc(_description: string): this { return this; }
+}
