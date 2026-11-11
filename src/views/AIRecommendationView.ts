@@ -1,4 +1,4 @@
-import { setIcon } from "obsidian";
+import { Notice, setIcon } from "obsidian";
 import type { TodoPluginLike } from "./TodoView";
 import type { AIRecommendation } from "../services/AIRecommendationService";
 import { t } from "../i18n";
@@ -19,7 +19,7 @@ export class AIRecommendationView {
     this.root = root;
   }
 
-  open(items: AIRecommendation[], onRefresh: () => Promise<void>, onAccept: (item: AIRecommendation) => Promise<void>): void {
+  open(items: AIRecommendation[], onRefresh: () => Promise<AIRecommendation[]>, onAccept: (item: AIRecommendation) => Promise<void>): void {
     this.active = true;
     this.root.empty();
     this.root.addClass("todo-detail-active", "todo-ai-detail-panel");
@@ -43,8 +43,19 @@ export class AIRecommendationView {
     refresh.title = t("刷新推荐");
     refresh.setAttribute("aria-label", t("刷新推荐"));
     refresh.addEventListener("click", async () => {
+      if (refresh.getAttribute("aria-busy") === "true") return;
+      refresh.setAttribute("aria-busy", "true");
       refresh.toggleClass("is-loading", true);
-      try { await onRefresh(); } finally { refresh.toggleClass("is-loading", false); }
+      try {
+        const refreshedItems = await onRefresh();
+        if (this.active) this.open(refreshedItems, onRefresh, onAccept);
+      } catch (error) {
+        console.error("Failed to refresh AI recommendations:", error);
+        new Notice(t("推荐生成失败，请稍后重试"));
+      } finally {
+        refresh.setAttribute("aria-busy", "false");
+        refresh.toggleClass("is-loading", false);
+      }
     });
   }
 

@@ -4420,3 +4420,11 @@
 }
 
 .is-mobile .obsidian-todo-nav-sidebar{display:none!important}
+
+.todo-onboarding{width:min(90vw,460px)}
+.todo-onboarding-brand{font-size:var(--font-ui-small);color:var(--text-muted);margin-bottom:8px}
+.todo-onboarding-progress{font-size:var(--font-ui-smaller);color:var(--text-faint)}
+.todo-onboarding-title{margin:8px 0 12px;font-size:var(--font-ui-large)}
+.todo-onboarding-body{color:var(--text-normal);line-height:1.6;min-height:72px}
+.todo-onboarding-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:24px}
+.todo-onboarding-navigation{display:flex;align-items:center;gap:8px}

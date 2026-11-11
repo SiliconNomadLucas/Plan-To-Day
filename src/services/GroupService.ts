@@ -1,6 +1,6 @@
 import { Vault } from "obsidian";
 import { ListGroup, createGroup } from "../models/Group";
-import { StorageService } from "./StorageService";
+import { PersistentJsonService } from "./PersistentJsonService";
 import { logger } from "../utils/logger";
 
 export interface GroupStore {
@@ -9,26 +9,23 @@ export interface GroupStore {
 
 const STORE_FILENAME = "groups.json";
 
-export class GroupService {
-  private storage: StorageService;
+export class GroupService extends PersistentJsonService {
   private groups: ListGroup[] = [];
-  private loaded = false;
 
   constructor(vault: Vault, folder: string) {
-    this.storage = new StorageService(vault, folder);
+    super(vault, folder);
   }
 
   async init(): Promise<void> {
-    await this.storage.init();
-    const store = await this.storage.read<GroupStore>(STORE_FILENAME);
-    if (store && store.groups) {
-      this.groups = store.groups;
-      logger.info("Loaded", this.groups.length, "groups");
-    } else {
-      this.groups = [];
-      logger.info("No existing groups, starting fresh");
-    }
-    this.loaded = true;
+    await this.initializeStore<GroupStore>(STORE_FILENAME, (store) => {
+      if (store && store.groups) {
+        this.groups = store.groups;
+        logger.info("Loaded", this.groups.length, "groups");
+      } else {
+        this.groups = [];
+        logger.info("No existing groups, starting fresh");
+      }
+    });
   }
 
   getAll(): ListGroup[] {
@@ -92,17 +89,10 @@ export class GroupService {
 
   private async save(): Promise<void> {
     const store: GroupStore = { groups: this.groups };
-    await this.storage.write(STORE_FILENAME, store);
+    await this.persistStore(STORE_FILENAME, store);
   }
 
-  /** 清空 StorageService 的文件缓存（供 resetAllData 使用） */
-  public clearCache(): void {
-    this.storage.clearCache();
-  }
-
-    private ensureLoaded(): void {
-    if (!this.loaded) {
-      throw new Error("GroupService not initialized. Call init() first.");
-    }
+  private ensureLoaded(): void {
+    this.ensureInitialized("GroupService");
   }
 }

@@ -1,5 +1,5 @@
 import { Vault } from "obsidian";
-import { StorageService } from "./StorageService";
+import { PersistentJsonService } from "./PersistentJsonService";
 import { RecurrenceSeries } from "../models/RecurrenceSeries";
 
 interface RecurrenceSeriesDatabase {
@@ -8,20 +8,17 @@ interface RecurrenceSeriesDatabase {
 
 const FILENAME = "recurrence-series.json";
 
-export class RecurrenceSeriesService {
-  private storage: StorageService;
+export class RecurrenceSeriesService extends PersistentJsonService {
   private series: RecurrenceSeries[] = [];
-  private loaded = false;
 
   constructor(vault: Vault, folder: string) {
-    this.storage = new StorageService(vault, folder);
+    super(vault, folder);
   }
 
   async init(): Promise<void> {
-    await this.storage.init();
-    const db = await this.storage.read<RecurrenceSeriesDatabase>(FILENAME);
-    this.series = db?.series ?? [];
-    this.loaded = true;
+    await this.initializeStore<RecurrenceSeriesDatabase>(FILENAME, (db) => {
+      this.series = db?.series ?? [];
+    });
   }
 
   getAll(): RecurrenceSeries[] {
@@ -53,13 +50,11 @@ export class RecurrenceSeriesService {
     return true;
   }
 
-  clearCache(): void { this.storage.clearCache(); }
-
   private async save(): Promise<void> {
-    await this.storage.write<RecurrenceSeriesDatabase>(FILENAME, { series: this.series });
+    await this.persistStore<RecurrenceSeriesDatabase>(FILENAME, { series: this.series });
   }
 
   private ensureLoaded(): void {
-    if (!this.loaded) throw new Error("RecurrenceSeriesService not initialized. Call init() first.");
+    this.ensureInitialized("RecurrenceSeriesService");
   }
 }

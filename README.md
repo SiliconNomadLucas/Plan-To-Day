@@ -124,6 +124,18 @@ src/
 └── utils/        # 日期、周期、重复任务和排序工具
 ```
 
+## 发布与维护
+
+提交 PR 或推送到 `main` 时，CI 会执行完整构建和测试，并检查 `package.json`、锁文件、插件清单及版本兼容记录是否一致。
+
+发布流程：
+
+1. 执行 `npm run version -- 0.1.2`，传入更高的 `major.minor.patch` 版本号。
+2. 提交版本变更并推送 `v0.1.2` 标签。
+3. CI 通过后会自动创建 GitHub Release，并附上 `main.js`、`manifest.json` 和 `styles.css`。
+
+本地可用 `npm run release:check` 完整预演发布门禁。该命令不创建标签或发布版本。
+
 ## 数据存储
 
 任务数据存储在当前 Vault 的 `todo/` 目录中：
@@ -132,7 +144,9 @@ src/
 - `lists.json`：自定义列表配置
 - `tags.json`：标签配置
 - `groups.json`：列表分组配置
-- `backups/`：自动备份文件
+- `backups/`：自动数据库备份；每日首次修改前保留快照，最多保留最近 30 天
+
+`database.json` 中包含任务数据的 `schemaVersion`。没有版本号的旧数据库会在加载时按迁移步骤升级并写回；如果数据库版本比当前插件更新，插件会停止加载该数据，不会尝试降级或覆盖。
 
 数据默认保存在本地，不会自动上传到第三方服务。
 

@@ -13,11 +13,15 @@ export interface StorageFile<T> {
   data: T;
 }
 
+export type BackupResult = "created" | "already-exists" | "missing-source" | "failed";
+
 const CURRENT_DATA_VERSION = 1;
+const DEFAULT_BACKUP_RETENTION_DAYS = 30;
 
 export class StorageService {
   private vault: Vault;
   private folder: string;
+  private backupRetentionDays: number;
 
   
   
@@ -26,11 +30,13 @@ export class StorageService {
   
   
   private writeQueues: Map<string, Promise<void>> = new Map();
+  private backupQueues: Map<string, Promise<BackupResult>> = new Map();
 
   
-  constructor(vault: Vault, folder: string) {
+  constructor(vault: Vault, folder: string, backupRetentionDays = DEFAULT_BACKUP_RETENTION_DAYS) {
     this.vault = vault;
     this.folder = folder;
+    this.backupRetentionDays = Math.max(1, Math.floor(backupRetentionDays));
   }
 
   
@@ -71,9 +77,8 @@ export class StorageService {
       logger.debug("Read from disk:", path);
       return parsed.data;
     } catch (e) {
-      
       logger.error("Failed to read:", path, e);
-      return null;
+      throw e;
     }
   }
 
@@ -83,7 +88,8 @@ export class StorageService {
 
     
     const prev = this.writeQueues.get(path) || Promise.resolve();
-    const next = prev.then(async () => {
+    // A failed write must not poison the queue for every later write to this file.
+    const next = prev.catch(() => undefined).then(async () => {
       try {
         
         const file: StorageFile<T> = {
@@ -120,36 +126,30 @@ export class StorageService {
 
     
     this.writeQueues.set(path, next);
-    await next;
+    try {
+      await next;
+    } finally {
+      if (this.writeQueues.get(path) === next) {
+        this.writeQueues.delete(path);
+      }
+    }
   }
 
   
-  async backup(filename: string): Promise<void> {
+  async backup(filename: string): Promise<BackupResult> {
     const path = this.getPath(filename);
+    const previous = this.backupQueues.get(path) || Promise.resolve("already-exists" as BackupResult);
+    const next = previous.then(
+      () => this.createDailyBackup(filename),
+      () => this.createDailyBackup(filename),
+    );
+    this.backupQueues.set(path, next);
     try {
-      
-      if (!(await this.vault.adapter.exists(path))) return;
-
-      const raw = await this.vault.read((this.vault.getAbstractFileByPath(path) as TFile));
-      
-      const date = new Date().toISOString().split("T")[0];
-      const backupPath = `${this.folder}/backups/${date}_${filename}`;
-
-      if (await this.vault.adapter.exists(backupPath)) {
-        
-        const backupFile = this.vault.getAbstractFileByPath(backupPath);
-        if (backupFile instanceof TFile) {
-          await this.vault.modify(backupFile, raw);
-        } else {
-          await this.vault.adapter.write(backupPath, raw);
-        }
-      } else {
-        await this.vault.create(backupPath, raw);
+      return await next;
+    } finally {
+      if (this.backupQueues.get(path) === next) {
+        this.backupQueues.delete(path);
       }
-      logger.info("Backup created:", backupPath);
-    } catch (e) {
-      
-      logger.error("Backup failed:", filename, e);
     }
   }
 
@@ -168,5 +168,57 @@ export class StorageService {
     if (!(await this.vault.adapter.exists(path))) {
       await this.vault.createFolder(path);
     }
+  }
+
+  private async createDailyBackup(filename: string): Promise<BackupResult> {
+    const sourcePath = this.getPath(filename);
+    const backupFolder = `${this.folder}/backups`;
+    try {
+      if (!(await this.vault.adapter.exists(sourcePath))) return "missing-source";
+
+      const date = this.localDateString(new Date());
+      const backupPath = `${backupFolder}/${date}_${filename}`;
+      let result: BackupResult = "already-exists";
+      if (!(await this.vault.adapter.exists(backupPath))) {
+        const raw = await this.vault.adapter.read(sourcePath);
+        await this.vault.create(backupPath, raw);
+        logger.info("Backup created:", backupPath);
+        result = "created";
+      }
+      try {
+        await this.pruneBackups(filename);
+      } catch (error) {
+        logger.warn("Backup retention cleanup failed:", filename, error);
+      }
+      return result;
+    } catch (error) {
+      logger.error("Backup failed:", filename, error);
+      return "failed";
+    }
+  }
+
+  private async pruneBackups(filename: string): Promise<void> {
+    const backupFolder = `${this.folder}/backups`;
+    const listed = await this.vault.adapter.list(backupFolder);
+    const suffix = `_${filename}`;
+    const snapshots = listed.files
+      .map((entry) => {
+        const name = entry.substring(entry.lastIndexOf("/") + 1);
+        const match = name.match(/^(\d{4}-\d{2}-\d{2})_/);
+        if (!match || !name.endsWith(suffix)) return null;
+        const path = entry.includes("/") ? entry : `${backupFolder}/${entry}`;
+        return { path, date: match[1] };
+      })
+      .filter((snapshot): snapshot is { path: string; date: string } => snapshot !== null)
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    for (const snapshot of snapshots.slice(this.backupRetentionDays)) {
+      await this.vault.adapter.remove(snapshot.path);
+      logger.info("Expired backup removed:", snapshot.path);
+    }
+  }
+
+  private localDateString(date: Date): string {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
   }
 }

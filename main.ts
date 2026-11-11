@@ -19,6 +19,9 @@ import { TodoNavView, VIEW_TYPE_TODO_NAV } from "./src/views/TodoNavView";
 import { TodoDetailSidebarView, VIEW_TYPE_TODO_DETAIL } from "./src/views/TodoDetailSidebarView";
 import { StatsService } from "./src/services/StatsService";
 import { setLanguage } from "./src/i18n";
+import type { ViewNav } from "./src/views/TodoView";
+import type { PlanKind } from "./src/models/Task";
+import { OnboardingModal } from "./src/ui/OnboardingModal";
 
 export default class ObsidianTodoPlugin extends Plugin {
   settings: ObsidianTodoSettings;
@@ -30,11 +33,12 @@ export default class ObsidianTodoPlugin extends Plugin {
   recurrenceSeriesService!: RecurrenceSeriesService;
   statsService!: StatsService;
   todoView?: TodoView;
-  activateNav?: (nav: any) => Promise<void>;
+  activateNav?: (nav: ViewNav) => Promise<void>;
   activateList?: (listId: string) => Promise<void>;
-  activatePlan?: (kind: any) => Promise<void>;
+  activatePlan?: (kind: PlanKind) => Promise<void>;
   showMobilePanel?: (panel: "nav" | "main" | "detail") => void;
   private recurrenceRefreshInFlight = false;
+  private freshInstall = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -44,7 +48,12 @@ export default class ObsidianTodoPlugin extends Plugin {
     this.listService = new ListService(this.app.vault, this.settings.todoFolder, this.settings.defaultListName);
     this.recurrenceSeriesService = new RecurrenceSeriesService(this.app.vault, this.settings.todoFolder);
     await this.recurrenceSeriesService.init();
-    this.taskService = new TaskService(this.app.vault, this.settings.todoFolder, this.recurrenceSeriesService);
+    this.taskService = new TaskService(
+      this.app.vault,
+      this.settings.todoFolder,
+      this.recurrenceSeriesService,
+      () => new Notice("任务备份失败，本次保存仍会继续"),
+    );
     await this.taskService.init();
     this.registerInterval(window.setInterval(() => {
       if (this.recurrenceRefreshInFlight) return;
@@ -94,9 +103,9 @@ export default class ObsidianTodoPlugin extends Plugin {
     });
 
     // Wire up sidebar nav callbacks
-    this.activateNav = async (nav: any) => { if (this.todoView) await this.todoView.activateNavFromExternal(nav); };
+    this.activateNav = async (nav: ViewNav) => { if (this.todoView) await this.todoView.activateNavFromExternal(nav); };
     this.activateList = async (listId: string) => { if (this.todoView) await this.todoView.activateListFromExternal(listId); };
-    this.activatePlan = async (kind: any) => { if (this.todoView) await this.todoView.activatePlanFromExternal(kind); };
+    this.activatePlan = async (kind: PlanKind) => { if (this.todoView) await this.todoView.activatePlanFromExternal(kind); };
     this.showMobilePanel = (panel) => { if (this.todoView) this.todoView.showMobilePanelFromExternal(panel); };
 
     // Auto-open sidebar nav and main view on startup
@@ -118,6 +127,7 @@ export default class ObsidianTodoPlugin extends Plugin {
       }
       // Open main todo view
       await this.activateView();
+      if (this.shouldShowOnboarding()) this.openOnboarding();
     });
   }
 
@@ -211,7 +221,9 @@ export default class ObsidianTodoPlugin extends Plugin {
   }
 
   async loadSettings(): Promise<void> {
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    const savedSettings = await this.loadData();
+    this.freshInstall = !savedSettings || Object.keys(savedSettings).length === 0;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, savedSettings);
 
     if (this.settings.sortConfig && (this.settings.sortConfig.primary.field as string) === "manual") {
       this.settings.sortConfig = {
@@ -225,5 +237,20 @@ export default class ObsidianTodoPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  openOnboarding(): void {
+    new OnboardingModal(this.app, async () => {
+      this.settings.onboardingCompleted = true;
+      await this.saveSettings();
+    }).open();
+  }
+
+  private shouldShowOnboarding(): boolean {
+    if (!this.freshInstall || this.settings.onboardingCompleted) return false;
+    if (this.taskService.getAllIncludingDeleted().length > 0) return false;
+    if (this.listService.getActive().some((list) => !list.isDefault)) return false;
+    if (this.groupService.getAll().length > 0) return false;
+    return !this.tagService.getAll().some((tag) => !tag.isDefault);
   }
 }

@@ -117,19 +117,30 @@ import { App, ItemView, Menu, Modal, Notice, setIcon, WorkspaceLeaf } from "obsi
 import type ObsidianTodoPlugin from "../../main";
 import { Task, MyDayGroup, PlanKind } from "../models/Task";
 import { extractLocalDate } from "../utils/recurrence";
-import { localTodayStr, currentPeriodKey, periodLabel, subGroupLabel, periodKeySort, getSubPeriodKeysForParent, getParentPeriodKey, getPeriodKeyForDate, ageFromDueDate, currentAge, getISOWeekNumber, getISOWeekRange } from "../utils/period";
+import { localTodayStr, currentPeriodKey, getSubPeriodKeysForParent, getParentPeriodKey, getPeriodKeyForDate, getISOWeekNumber, getISOWeekRange } from "../utils/period";
 import { TaskDetailView, ScheduleSidebarItem } from "./TaskDetailView";
 import type { RecurrenceSeriesService } from "../services/RecurrenceSeriesService";
 import { AIRecommendationView } from "./AIRecommendationView";
-import { VIEW_TYPE_TODO_DETAIL } from "./TodoDetailSidebarView";
+import { TodoDetailSidebarView, VIEW_TYPE_TODO_DETAIL } from "./TodoDetailSidebarView";
 import { sortTasks, getMyDayGroupFromTime } from "../utils/sort";
 import type { SortConfig, SortField, SortDirection } from "../utils/sort";
-import { renderStatCard, renderDistributionBar, renderStackedBarChart, renderMonthCalendar, renderBarChart, renderYearHeatmap } from "../utils/chart";
 import { IconPickerModal } from "../ui/IconPickerModal";
 import { CreateListModal } from "../ui/CreateListModal";
 import { getLunarDisplayText, isLunarSpecialDay } from "../utils/lunar";
 import { isEnglish, localizeDom, systemTagName, t } from "../i18n";
 import { LocalAIProvider, AIRecommendation, isSimilar, validateRecommendation } from "../services/AIRecommendationService";
+import { isAllDayTask as isAllDayTaskRule, isVisibleInSchedule as isVisibleInScheduleRule, layoutOverlappingTasks } from "../utils/schedule";
+import { localizedPeriodLabel as getLocalizedPeriodLabel, localizedSubGroupLabel as getLocalizedSubGroupLabel } from "../utils/plan-labels";
+import { formatReviewTitle, reviewDateToString, shiftReviewDate, type ReviewMode, type ReviewDateState } from "../utils/review";
+import { ReviewRenderer } from "./ReviewRenderer";
+import { ScheduleRenderer } from "./ScheduleRenderer";
+import { ScheduleDragController, type ScheduleDragState } from "./ScheduleDragController";
+import { PlanGroupRenderer } from "./PlanGroupRenderer";
+import { GoalDashboardRenderer } from "./GoalDashboardRenderer";
+import { LifePlanRenderer } from "./LifePlanRenderer";
+import { filterTasksByStatus, hideFutureRecurrenceInstances } from "../utils/task-list";
+import type { ReviewStats } from "../services/StatsService";
+import { openPluginSettings } from "../utils/obsidian-settings";
 
 export type ViewNav = "myday" | "all" | "inbox" | "plan" | "schedule" | "review" | "trash";
 
@@ -153,6 +164,7 @@ const SORT_FIELD_LABELS: Record<SortField, string> = {
 };
 
 export interface TodoPluginLike {
+  todoView?: TodoView;
   taskService: {
     getMyDay(): Task[];
     getInbox(defaultListId: string): Task[];
@@ -204,10 +216,10 @@ export interface TodoPluginLike {
     update(id: string, changes: { sortOrder?: number; name?: string; isCollapsed?: boolean }): Promise<{ id: string; name: string } | null>;
   };
   statsService: {
-    getDayStats(date: string): any;
-    getWeekStats(year: number, week: number): any;
-    getMonthStats(year: number, month: number): any;
-    getYearStats(year: number): any;
+    getDayStats(date: string): ReviewStats;
+    getWeekStats(year: number, week: number): ReviewStats;
+    getMonthStats(year: number, month: number): ReviewStats;
+    getYearStats(year: number): ReviewStats;
     getStatusSummary(start: string, end: string): { total: number; completed: number; active: number; shelved: number; abandoned: number; overdue: number; completionRate: number };
     calcStreak(fromDate: string): number;
     calcMaxStreak(startDate: string, endDate: string): number;
@@ -265,49 +277,29 @@ export class TodoView extends ItemView {
   private mobileDetailLeaf: WorkspaceLeaf | null = null;
   private detailView!: TaskDetailView;
   private aiView!: AIRecommendationView;
+  private reviewRenderer!: ReviewRenderer;
+  private scheduleRenderer!: ScheduleRenderer;
+  private dragController!: ScheduleDragController;
+  private planGroupRenderer: PlanGroupRenderer;
+  private goalDashboardRenderer: GoalDashboardRenderer;
+  private lifePlanRenderer: LifePlanRenderer;
   private planContainerEl!: HTMLDivElement;
   private planGroupEl!: HTMLDivElement;
   private quadrantGroupEl!: HTMLDivElement;
   private activePlanKind: PlanKind | null = null;
-  private goalPeriodKey: string | null = null;
-  private expandedGoalIds = new Set<string>();
-  private goalRenderToken = 0;
-  private goalKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   private scheduleMode: "day" | "week" | "month" = "month";
   private scheduleSidebarOpen = false;
   private scheduleYear!: number;
   private scheduleMonth!: number;
   private scheduleDate!: number;
-  private reviewMode: "day" | "week" | "month" | "year" = "day";
+  private reviewMode: ReviewMode = "day";
   private reviewYear!: number;
   private reviewMonth!: number;
   private reviewDate!: number;
   private reviewFilter: { type: "date" | "overdue" | "tag"; value: string; label: string; dateField?: "dueDate" | "completedAt" } | null = null;
   private myDayViewDate: string | null = null;
   private timeLineTimer: number | null = null;
-  private dragState: {
-    type: "move" | "resize";
-    taskId: string;
-    startY: number;
-    startX: number;
-    origStartMin: number;
-    origEndMin: number;
-    dateStr: string;
-    hourHeight: number;
-    ghost: HTMLElement;
-    card: HTMLElement;
-    moved: boolean;
-    colCount: number;
-    columnsRect: DOMRect | null;
-    dateStrs: string[];
-    currentColIdx: number;
-    ghostBaseLeft: number;
-    scrollContainer: HTMLElement | null;
-    scrollRAF: number | null;
-    origScrollTop: number;
-    columnsEl: HTMLElement | null;
-    source: "timeline" | "allday";
-  } | null = null;
+  private dragState: ScheduleDragState | null = null;
   private _onDragMove: ((ev: MouseEvent) => void) | null = null;
   private _onDragEnd: ((ev: MouseEvent) => void) | null = null;
   private _lastDragMoved = false;
@@ -321,6 +313,83 @@ export class TodoView extends ItemView {
   constructor(leaf: WorkspaceLeaf, plugin: TodoPluginLike) {
     super(leaf);
     this.plugin = plugin;
+    this.planGroupRenderer = new PlanGroupRenderer(plugin.taskService, {
+      renderTaskRow: (container, task) => this.renderTaskRow(container, task, "plan"),
+      isMobile: () => this.isMobile(),
+      promptPlanCreate: (kind, periodKey) => this.promptPlanCreate(kind, periodKey),
+      onTaskCreated: async () => {
+        if (this.activePlanKind === "year" || this.activePlanKind === "month") {
+          await this.renderGoalDashboard(this.activePlanKind);
+        } else if (this.activePlanKind) {
+          await this.renderPlanView(this.activePlanKind);
+        }
+      },
+    });
+    this.goalDashboardRenderer = new GoalDashboardRenderer(plugin, this.planGroupRenderer, {
+      getTaskListEl: () => this.taskListEl,
+      getQuickContainerEl: () => this.quickContainerEl,
+      getActivePlanKind: () => this.activePlanKind,
+      isMobile: () => this.isMobile(),
+      openTask: (taskId) => this.openPlanTask(taskId),
+      promptPlanCreate: (kind, periodKey, parentId, tags) =>
+        this.promptPlanCreate(kind, periodKey, parentId, tags),
+      getWeekPlanMoveOptions: (goal) => this.getPlanMoveOptions(goal),
+      refreshLists: () => this.renderLists(),
+      confirmQuarterGoal: () => new ConfirmModal(
+        this.app,
+        "是否为当前月份创建同名月度目标，并关联此季度目标？",
+        "创建月度目标",
+        false,
+      ).openAndConfirm(),
+    });
+    this.lifePlanRenderer = new LifePlanRenderer({
+      getTasks: () => this.plugin.taskService.getAll(),
+      getTags: () => this.plugin.tagService.getAll(),
+      toggleCompletion: async (task) => {
+        if (task.isCompleted) await this.plugin.taskService.uncomplete(task.id);
+        else await this.plugin.taskService.complete(task.id);
+      },
+      openTask: (taskId) => this.openPlanTask(taskId),
+    });
+    this.reviewRenderer = new ReviewRenderer(plugin, (filter) => this.navigateWithFilter(filter));
+    this.scheduleRenderer = new ScheduleRenderer(
+      plugin,
+      {
+        getTaskBlockColor: (task) => this.getTaskBlockColor(task),
+        getContrastColor: (color) => this.getContrastColor(color),
+        isVisibleInSchedule: (task, view) => this.isVisibleInSchedule(task, view),
+        isAllDayTask: (task) => this.isAllDayTask(task),
+        openTask: (taskId) => this.openScheduleTask(taskId),
+        renderTimedTaskCard: (container, task) => this.renderScheduleTaskCard(container, task),
+        startAllDayDrag: (event, task, card, grid, dateStr) => this.startAllDayDrag(event, task, card, grid, dateStr),
+        startWeekAllDayDrag: (event, task, card, grid, weekStart, columnIndex) => this.startWeekAllDayDrag(event, task, card, grid, weekStart, columnIndex),
+        isDragging: () => this.dragState !== null,
+        wasLastDragMoved: () => this._lastDragMoved,
+        promptTitle: () => new PromptModal(this.app, "输入任务标题").openAndGetValue(),
+        createTask: async (fields) => { await this.plugin.taskService.create(fields); },
+        rerender: () => {
+          this.scheduleScrollTarget = "preserve";
+          this.renderScheduleView();
+        },
+        renderTimeline: (grid) => this.renderTimeLine(grid),
+        snapMinute: (pixels, hourHeight) => this.snapMinute(pixels, hourHeight),
+        minuteToIso: (dateStr, minute) => this.minuteToIso(dateStr, minute),
+        getScrollTarget: () => this.scheduleScrollTarget,
+        consumeScrollTarget: () => { this.scheduleScrollTarget = "preserve"; },
+      },
+    );
+    this.dragController = new ScheduleDragController({
+      getState: () => this.dragState,
+      setState: (state) => { this.dragState = state; },
+      setLastDragMoved: (moved) => { this._lastDragMoved = moved; },
+      snapMinute: (pixels, hourHeight) => this.snapMinute(pixels, hourHeight),
+      minuteToIso: (dateStr, minute) => this.minuteToIso(dateStr, minute),
+      updateTask: async (taskId, changes) => { await this.plugin.taskService.update(taskId, changes); },
+      refreshDetail: (taskId) => this.refreshDetailIfActive(taskId),
+      openTask: (taskId) => this.openScheduleTask(taskId),
+      setScrollTarget: (target) => { this.scheduleScrollTarget = target; },
+      rerender: () => this.renderScheduleView(),
+    });
   }
 
   getViewType(): string {
@@ -382,7 +451,7 @@ export class TodoView extends ItemView {
     };
     layout.addEventListener("touchstart", this._onTouchStart, { passive: true });
     layout.addEventListener("touchend", this._onTouchEnd, { passive: true });
-    (this.plugin as any).todoView = this;
+    this.plugin.todoView = this;
     const nav = layout.createDiv({ cls: "todo-nav" });
     const main = layout.createDiv({ cls: "todo-main" });
     const taskHeader = main.createDiv({ cls: "todo-task-header" });
@@ -399,9 +468,9 @@ export class TodoView extends ItemView {
     this.filterBtnEl.setAttribute("aria-label", t("状态筛选"));
     this.filterBtnEl.addEventListener("click", (ev) => this.showStatusFilterMenu(ev));
     this.aiBtnEl = taskHeader.createEl("button", { cls: "todo-sort-btn todo-ai-btn" }) as HTMLButtonElement;
-    setIcon(this.aiBtnEl, "lightbulb");
+    setIcon(this.aiBtnEl, "list-checks");
     this.aiBtnEl.style.display = "none";
-    this.aiBtnEl.title = t("AI 推荐");
+    this.aiBtnEl.title = t("待办事项推荐");
     this.aiBtnEl.addEventListener("click", () => {
       const layout = this.containerEl.querySelector(".todo-layout");
       if (layout) layout.addClass("todo-layout-detail-open");
@@ -519,9 +588,7 @@ export class TodoView extends ItemView {
     const settingsBtn = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });
     setIcon(settingsBtn, "settings");
         settingsBtn.addEventListener("click", () => {
-      const s = (this.plugin.app as any)?.setting;
-      s?.open();
-      s?.openTabById("obsidian-todo");
+      if (this.plugin.app) openPluginSettings(this.plugin.app, "obsidian-todo");
     });
     // Trash button
     this.navEls["review"] = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });
@@ -609,8 +676,8 @@ export class TodoView extends ItemView {
     await this.renderLists();
 
     // T-703: Global drag handlers
-    this._onDragMove = (ev: MouseEvent) => this.handleDragMove(ev);
-    this._onDragEnd = (ev: MouseEvent) => this.handleDragEnd(ev);
+    this._onDragMove = (ev: MouseEvent) => this.dragController.handleMove(ev);
+    this._onDragEnd = (ev: MouseEvent) => { void this.dragController.handleEnd(ev); };
     document.addEventListener("mousemove", this._onDragMove);
     document.addEventListener("mouseup", this._onDragEnd);
     localizeDom(this.containerEl);
@@ -619,9 +686,8 @@ export class TodoView extends ItemView {
   private async openAIBar(): Promise<void> {
     const mode = this.plugin.settings.activeViewNav === "plan" && this.activePlanKind === "month" ? "month" : "myday";
     const date = this.myDayViewDate || localTodayStr();
-    const monthKey = this.goalPeriodKey || currentPeriodKey("month");
+    const monthKey = this.goalDashboardRenderer.periodKey || currentPeriodKey("month");
     const provider = new LocalAIProvider();
-    let items: AIRecommendation[] = [];
     const accept = async (item: AIRecommendation): Promise<void> => {
       const error = validateRecommendation(item);
       if (error) { new Notice(error); return; }
@@ -630,19 +696,28 @@ export class TodoView extends ItemView {
         return;
       }
       const itemDate = item.startDate ? extractLocalDate(item.startDate) : item.dueDate ? extractLocalDate(item.dueDate) : null;
-      const duplicate = this.plugin.taskService.getAll().some((task) => !task.isDeleted && isSimilar(task.title, item.title) && (mode === "month" ? task.planPeriodKey === item.planPeriodKey : this.getTaskMyDayDate(task) === itemDate));
+      const currentTasks = this.plugin.taskService.getAll();
+      const weeklyGoalId = mode === "myday" && item.parentId &&
+        currentTasks.some((task) => task.id === item.parentId && task.planKind === "week")
+        ? item.parentId
+        : undefined;
+      const duplicate = currentTasks.some((task) =>
+        task.id !== weeklyGoalId &&
+        !task.isDeleted &&
+        isSimilar(task.title, item.title) &&
+        (mode === "month" ? task.planPeriodKey === item.planPeriodKey : this.getTaskMyDayDate(task) === itemDate),
+      );
       if (duplicate) { new Notice(t("跳过重复或无效项")); return; }
       if (item.sourceTaskId) await this.plugin.taskService.update(item.sourceTaskId, { myDayGroup: item.myDayGroup, startDate: item.startDate, dueDate: item.dueDate });
-      else await this.plugin.taskService.create({ title: item.title, note: item.note, listId: item.listId, tags: item.tags, isImportant: item.isImportant, myDayGroup: item.myDayGroup ?? "allday", startDate: item.startDate ?? null, dueDate: item.dueDate ?? null, planKind: item.planKind, planPeriodKey: item.planPeriodKey, parentId: item.parentId });
+      else await this.plugin.taskService.create({ title: item.title, note: item.note, listId: item.listId, tags: item.tags, isImportant: item.isImportant, myDayGroup: item.myDayGroup ?? "allday", startDate: item.startDate ?? null, dueDate: item.dueDate ?? null, planKind: mode === "month" ? item.planKind : undefined, planPeriodKey: mode === "month" ? item.planPeriodKey : undefined, parentId: item.parentId });
       // Refresh the main task area without calling refreshAll(), which closes
       // the active detail/AI sidebar as part of its reset flow.
       await this.refreshAfterAIAccept();
       new Notice(t("已保存"));
     };
-    const generate = async () => {
+    const generate = async (): Promise<AIRecommendation[]> => {
       const context = { tasks: this.plugin.taskService.getAll(), date, monthKey, intensity: this.plugin.settings.planningIntensity };
-      items = mode === "myday" ? await provider.recommendMyDay(context) : await provider.recommendMonthWeeks(context);
-      this.aiView.open(items, generate, accept);
+      return mode === "myday" ? provider.recommendMyDay(context) : provider.recommendMonthWeeks(context);
     };
     this.aiView.open([], generate, accept);
     const tasks = this.plugin.taskService.getAll();
@@ -650,14 +725,20 @@ export class TodoView extends ItemView {
       new Notice(t("当前月份没有月度目标，请先创建月度目标"));
       return;
     }
-    try { await generate(); } catch (error) { console.error(error); new Notice(t("AI 推荐失败，请稍后重试")); }
+    try {
+      const items = await generate();
+      this.aiView.open(items, generate, accept);
+    } catch (error) {
+      console.error(error);
+      new Notice(t("推荐生成失败，请稍后重试"));
+    }
   }
 
   async onClose(): Promise<void> {
     if (this.timeLineTimer) { clearInterval(this.timeLineTimer); this.timeLineTimer = null; }
     if (this._onDragMove) document.removeEventListener("mousemove", this._onDragMove);
     if (this._onDragEnd) document.removeEventListener("mouseup", this._onDragEnd);
-    if (this.goalKeyHandler) { document.removeEventListener("keydown", this.goalKeyHandler); this.goalKeyHandler = null; }
+    this.goalDashboardRenderer.dispose();
     if (this._onTouchStart) this.layoutEl?.removeEventListener("touchstart", this._onTouchStart);
     if (this._onTouchEnd) this.layoutEl?.removeEventListener("touchend", this._onTouchEnd);
     this.containerEl.empty();
@@ -725,36 +806,27 @@ export class TodoView extends ItemView {
 
   private async openMobileDetailSidebar(): Promise<HTMLElement | null> {
     if (!this.isMobileEnvironment()) return this.detailEl;
-    const workspace = this.app.workspace as any;
-    let leaf = workspace.getLeavesOfType(VIEW_TYPE_TODO_DETAIL)[0] as WorkspaceLeaf | undefined;
-    if (!leaf && typeof workspace.ensureSideLeaf === "function") {
-      leaf = await workspace.ensureSideLeaf(VIEW_TYPE_TODO_DETAIL, "right", { active: false, reveal: false });
-    }
+    let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO_DETAIL)[0];
+    if (!leaf) leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE_TODO_DETAIL, "right", { active: false, reveal: false });
     if (!leaf) return null;
-    if (typeof leaf.setViewState === "function") {
-      await leaf.setViewState({ type: VIEW_TYPE_TODO_DETAIL, active: false });
-    }
+    await leaf.setViewState({ type: VIEW_TYPE_TODO_DETAIL, active: false });
     this.mobileDetailLeaf = leaf;
-    const root = (leaf.view as { contentEl?: HTMLElement } | undefined)?.contentEl;
-    if (root) {
-      root.addClass("todo-detail-sidebar-host");
-      this.mobileDetailRoot = root;
-    }
-    return root ?? null;
+    const view = leaf.view;
+    if (!(view instanceof TodoDetailSidebarView)) return null;
+    view.contentEl.addClass("todo-detail-sidebar-host");
+    this.mobileDetailRoot = view.contentEl;
+    return view.contentEl;
   }
 
   private revealMobileDetailSidebar(): void {
     if (!this.isMobileEnvironment() || !this.mobileDetailLeaf) return;
-    const workspace = this.app.workspace as any;
-    const rightSplit = workspace.rightSplit;
-    if (rightSplit && typeof rightSplit.expand === "function") rightSplit.expand();
-    if (typeof workspace.revealLeaf === "function") workspace.revealLeaf(this.mobileDetailLeaf);
+    this.app.workspace.rightSplit.expand();
+    this.app.workspace.revealLeaf(this.mobileDetailLeaf);
   }
 
   private collapseMobileDetailSidebar(): void {
     if (!this.isMobileEnvironment()) return;
-    const rightSplit = (this.app.workspace as any).rightSplit;
-    if (rightSplit && typeof rightSplit.collapse === "function") rightSplit.collapse();
+    this.app.workspace.rightSplit.collapse();
   }
 
   attachMobileDetailRoot(root: HTMLElement): void {
@@ -931,7 +1003,7 @@ export class TodoView extends ItemView {
       const showAi = isMyday || isMonthlyPlan;
       const isTaskView = activeViewNav === "all" || activeViewNav === "inbox" || !!selectedListId;
       this.aiBtnEl.style.display = showAi ? "" : "none";
-      this.aiBtnEl.title = t("AI 推荐");
+      this.aiBtnEl.title = t(isMonthlyPlan ? "周计划推荐" : "待办事项推荐");
       this.filterBtnEl.style.display = isTaskView ? "" : "none";
       this.filterBtnEl.style.marginLeft = isMyday ? "auto" : "4px";
       this.filterBtnEl.title = t("状态筛选");
@@ -1485,48 +1557,6 @@ private async activateNav(nav: ViewNav): Promise<void> {
     menu.showAtMouseEvent(ev);
   }
 
-  private applyTaskStatusFilter(tasks: Task[]): Task[] {
-    const status = this.plugin.settings.taskFilterStatus || "active";
-    if (status === "all") return tasks;
-    if (status === "completed") return tasks.filter((task) => task.isCompleted);
-    if (status === "shelved") return tasks.filter((task) => task.status === "shelved");
-    if (status === "abandoned") return tasks.filter((task) => task.status === "abandoned");
-    return tasks.filter((task) => !task.isCompleted && task.status === "active");
-  }
-
-  /**
-   * Microsoft To Do 风格的重复任务列表规则：
-   * 未来重复实例仍保留在数据中，供日程视图和重复系列逻辑使用，
-   * 但普通任务清单只展示今天及过去的实例，避免预生成实例占满列表。
-   */
-  private hideFutureRecurrenceInstances(tasks: Task[]): Task[] {
-    const today = localTodayStr();
-    const grouped = new Map<string, Task[]>();
-    for (const task of tasks) {
-      if (task.recurrenceGroupId && !task.isRecurrenceSource && task.dueDate) {
-        const group = grouped.get(task.recurrenceGroupId) || [];
-        group.push(task);
-        grouped.set(task.recurrenceGroupId, group);
-      }
-    }
-    const showNextFuture = new Set<string>();
-    for (const [groupId, group] of grouped) {
-      const hasPendingCurrentOrPast = group.some((task) => {
-        const date = extractLocalDate(task.dueDate!);
-        return date <= today && !task.isCompleted;
-      });
-      if (hasPendingCurrentOrPast) continue;
-      const next = group
-        .filter((task) => extractLocalDate(task.dueDate!) > today && !task.isCompleted)
-        .sort((a, b) => extractLocalDate(a.dueDate!).localeCompare(extractLocalDate(b.dueDate!)))[0];
-      if (next) showNextFuture.add(next.id);
-    }
-    return tasks.filter((task) => {
-      if (!task.recurrenceGroupId || task.isRecurrenceSource || !task.dueDate) return true;
-      return extractLocalDate(task.dueDate) <= today || showNextFuture.has(task.id);
-    });
-  }
-
   private getTaskMyDayDate(task: Task): string | null {
     return task.dueDate ? extractLocalDate(task.dueDate) : task.startDate ? extractLocalDate(task.startDate) : null;
   }
@@ -1576,8 +1606,11 @@ private async activateNav(nav: ViewNav): Promise<void> {
     // “我的一天”不使用全局状态筛选：它必须同时显示当天的进行中、已完成、搁置和放弃任务。
     // 其他任务视图继续沿用状态筛选设置。
     tasks = view === "myday"
-      ? this.hideFutureRecurrenceInstances(tasks)
-      : this.hideFutureRecurrenceInstances(this.applyTaskStatusFilter(tasks));
+      ? hideFutureRecurrenceInstances(tasks, localTodayStr())
+      : hideFutureRecurrenceInstances(
+        filterTasksByStatus(tasks, this.plugin.settings.taskFilterStatus || "active"),
+        localTodayStr(),
+      );
 
     const currentView = this.plugin.settings.selectedListId ? "list" : this.plugin.settings.activeViewNav;
 
@@ -1679,7 +1712,13 @@ private async activateNav(nav: ViewNav): Promise<void> {
   }
 
   private async renderQuadrantGroups(): Promise<void> {
-    const allTasks = this.hideFutureRecurrenceInstances(this.applyTaskStatusFilter(this.plugin.taskService.getAll().filter((task) => !task.planKind || this.isScheduledWeekPlan(task))));
+    const allTasks = hideFutureRecurrenceInstances(
+      filterTasksByStatus(
+        this.plugin.taskService.getAll().filter((task) => !task.planKind || this.isScheduledWeekPlan(task)),
+        this.plugin.settings.taskFilterStatus || "active",
+      ),
+      localTodayStr(),
+    );
     const quadTags = this.plugin.tagService.getQuadrantTags();
     const config = this.plugin.settings.sortConfig;
     const selected = this.plugin.settings.selectedQuadrant;
@@ -2140,7 +2179,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
         await this.plugin.taskService.create({ title: title.trim(), planKind: "life" });
         await this.renderLifePlanView();
       } else {
-        await this.plugin.taskService.create({ title: title.trim(), planKind: kind, planPeriodKey: this.goalPeriodKey ?? currentPeriodKey(kind) });
+        await this.plugin.taskService.create({ title: title.trim(), planKind: kind, planPeriodKey: this.goalDashboardRenderer.periodKey ?? currentPeriodKey(kind) });
         if (kind === "year" || kind === "month") await this.renderGoalDashboard(kind);
         else await this.renderPlanView(kind);
       }
@@ -2181,7 +2220,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       if (kind === "life") {
         await this.plugin.taskService.create({ title, planKind: "life" });
       } else {
-        await this.plugin.taskService.create({ title, planKind: kind, planPeriodKey: this.goalPeriodKey! });
+        await this.plugin.taskService.create({ title, planKind: kind, planPeriodKey: this.goalDashboardRenderer.periodKey! });
       }
       this.quickInputEl.value = "";
       if (kind === "life") await this.renderLifePlanView();
@@ -2325,951 +2364,35 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     this.taskListEl.removeClass("todo-life-active");
     this.taskListEl.removeClass("todo-goal-active");
     this.taskListEl.empty();
-    const ts = this.plugin.taskService;
-    const curKey = currentPeriodKey(kind);
-    // Collect all period keys
-    const allTasks = ts.getAll();
-    const planTasks = allTasks.filter((t) => t.planKind === kind && t.planPeriodKey);
-    const keySet = new Set<string>();
-    planTasks.forEach((t) => keySet.add(t.planPeriodKey!));
-    if (!keySet.has(curKey)) keySet.add(curKey);
-    const sortedKeys = periodKeySort(kind, Array.from(keySet));
-    // Sub-period config
-    const subKind: PlanKind | null = kind === "year" ? "quarter" : kind === "month" ? "week" : null;
-    const curKeyForSub = currentPeriodKey(subKind || "week");
-    for (const pk of sortedKeys) {
-      const parentTasks = ts.getByPlanKindAndPeriod(kind, pk);
-      const isCurrent = pk === curKey;
-      const groupEl = this.taskListEl.createDiv({ cls: "todo-plan-group" });
-      const headerEl = groupEl.createDiv({ cls: "todo-plan-group-header" });
-      const arrow = headerEl.createSpan({ cls: "todo-plan-group-arrow" + (isCurrent ? "" : " collapsed"), text: "\u25bc" });
-      headerEl.createSpan({ cls: "todo-plan-group-label", text: this.localizedPeriodLabel(kind, pk) });
-      headerEl.createSpan({ cls: "todo-plan-group-count", text: String(parentTasks.length) });
-      const addBtn = headerEl.createSpan({ cls: "todo-plan-add-btn", text: "+" });
-      addBtn.title = "\u65b0\u5efa\u4efb\u52a1";
-      const bodyEl = groupEl.createDiv({ cls: "todo-plan-group-body" });
-      bodyEl.dataset.periodKey = pk;
-      if (!isCurrent) bodyEl.style.display = "none";
-      // Render parent tasks
-      for (const task of parentTasks) {
-        this.renderTaskRow(bodyEl, task, "plan");
-      }
-      // Add inline input
-      this.setupPlanAddButton(addBtn, bodyEl, kind, pk);
-      // Toggle collapse
-      headerEl.addEventListener("click", (ev) => {
-        if ((ev.target as HTMLElement).closest(".todo-plan-add-btn")) return;
-        const collapsed = bodyEl.style.display === "none";
-        bodyEl.style.display = collapsed ? "" : "none";
-        arrow.toggleClass("collapsed", !collapsed);
-      });
-      // Sub-groups (quarter/week)
-      if (subKind) {
-        const subKeys = getSubPeriodKeysForParent(kind, pk);
-        const sortedSubKeys = periodKeySort(subKind, subKeys);
-        for (const sk of sortedSubKeys) {
-          const subTasks = ts.getByPlanKindAndPeriod(subKind, sk);
-          const isCurSub = sk === curKeyForSub;
-          const subGroupEl = bodyEl.createDiv({ cls: "todo-plan-subgroup" });
-          const subHeaderEl = subGroupEl.createDiv({ cls: "todo-plan-subgroup-header" });
-          const subArrow = subHeaderEl.createSpan({ cls: "todo-plan-group-arrow" + (isCurSub ? "" : " collapsed"), text: "\u25bc" });
-          subHeaderEl.createSpan({ cls: "todo-plan-subgroup-label", text: this.localizedSubGroupLabel(subKind, sk) });
-          subHeaderEl.createSpan({ cls: "todo-plan-group-count", text: String(subTasks.length) });
-          const subAddBtn = subHeaderEl.createSpan({ cls: "todo-plan-add-btn", text: "+" });
-          subAddBtn.title = "\u65b0\u5efa\u4efb\u52a1";
-          const subBodyEl = subGroupEl.createDiv({ cls: "todo-plan-group-body" });
-          subBodyEl.dataset.periodKey = sk;
-          if (!isCurSub) subBodyEl.style.display = "none";
-          for (const task of subTasks) {
-            this.renderTaskRow(subBodyEl, task, "plan");
-          }
-          this.setupPlanAddButton(subAddBtn, subBodyEl, subKind, sk);
-          subHeaderEl.addEventListener("click", (ev) => {
-            if ((ev.target as HTMLElement).closest(".todo-plan-add-btn")) return;
-            const collapsed = subBodyEl.style.display === "none";
-            subBodyEl.style.display = collapsed ? "" : "none";
-            subArrow.toggleClass("collapsed", !collapsed);
-          });
-        }
-      }
-    }
+    this.planGroupRenderer.renderPlan(this.taskListEl, kind);
   }
 
-
-  private async renderGoalDashboard(kind: "year"|"month", preserveScrollPosition = false): Promise<void> {
-    const renderToken = ++this.goalRenderToken;
-    const previousScrollTop = preserveScrollPosition
-      ? (this.taskListEl.querySelector(".todo-goal-scroll-content") as HTMLElement | null)?.scrollTop ?? 0
-      : 0;
-    this.taskListEl.removeClass("todo-life-active");
-    this.taskListEl.empty();
-    this.taskListEl.addClass("todo-goal-active");
-    const curNow = currentPeriodKey(kind);
-    if (!this.goalPeriodKey || (kind === "year" && this.goalPeriodKey.length !== 4) || (kind === "month" && this.goalPeriodKey.length !== 7)) {
-      this.goalPeriodKey = curNow;
-    }
-    const periodKey = this.goalPeriodKey;
-    const isCurrentRender = () => this.goalRenderToken === renderToken && this.goalPeriodKey === periodKey;
-    this.quickContainerEl.style.display = this.plugin.settings.goalViewMode === "list" ? "none" : "";
-    if (this.goalKeyHandler) { document.removeEventListener("keydown", this.goalKeyHandler); this.goalKeyHandler = null; }
-
-    const stickyHeader = this.taskListEl.createDiv({ cls: "todo-goal-sticky-header" });
-    const goalContent = this.taskListEl.createDiv({ cls: "todo-goal-scroll-content" });
-    const nav = stickyHeader.createDiv({ cls: "todo-goal-nav" });
-    const prevBtn = nav.createEl("button", { cls: "todo-goal-nav-btn", text: "◀" });
-    prevBtn.setAttribute("aria-label", "上一周期");
-    const labelEl = nav.createSpan({ cls: "todo-goal-nav-label", text: kind === "year" ? periodKey + " 年" : periodKey });
-    const nextBtn = nav.createEl("button", { cls: "todo-goal-nav-btn", text: "▶" });
-    nextBtn.setAttribute("aria-label", "下一周期");
-    const backBtn = nav.createEl("button", { cls: "todo-goal-nav-btn todo-goal-nav-back", text: kind === "year" ? "回到今年" : "回到本月" });
-    backBtn.setAttribute("aria-label", "回到当前");
-
-    const updateLabel = () => {
-      labelEl.setText(kind === "year" ? (this.goalPeriodKey ?? "") + " 年" : (this.goalPeriodKey ?? ""));
-      localizeDom(nav);
-    };
-    const clampKey = (k: string) => {
-      if (kind === "year") {
-        const min = 2000;
-        const y = Math.max(min, parseInt(k, 10));
-        return String(y);
-      }
-      return k;
-    };
-    const shift = (delta: number) => {
-      if (kind === "year") {
-        const y = parseInt(this.goalPeriodKey!, 10) + delta;
-        this.goalPeriodKey = clampKey(String(y));
-      } else {
-        const [yStr, mStr] = this.goalPeriodKey!.split("-");
-        let y = parseInt(yStr, 10), m = parseInt(mStr, 10) + delta;
-        if (m < 1) { y -= 1; m = 12; } else if (m > 12) { y += 1; m = 1; }
-        const yy = Math.max(2000, y);
-        this.goalPeriodKey = yy + "-" + String(m).padStart(2, "0");
-      }
-      updateLabel();
-      this.renderGoalDashboard(kind);
-    };
-
-    prevBtn.addEventListener("click", () => shift(-1));
-    nextBtn.addEventListener("click", () => shift(1));
-    backBtn.addEventListener("click", () => {
-      this.goalPeriodKey = curNow;
-      updateLabel();
-      this.renderGoalDashboard(kind);
-    });
-    this.goalKeyHandler = (e: KeyboardEvent) => {
-      if (!(this.plugin.settings.activeViewNav === "plan" && (this.activePlanKind === "year" || this.activePlanKind === "month"))) return;
-      if (e.key === "ArrowLeft") { e.preventDefault(); shift(-1); }
-      if (e.key === "ArrowRight") { e.preventDefault(); shift(1); }
-    };
-    document.addEventListener("keydown", this.goalKeyHandler);
-
-    const goalAllTasks = this.plugin.taskService.getAll();
-    const periodTasks = goalAllTasks.filter((t) => t.planKind === kind && t.planPeriodKey === periodKey && !t.isDeleted && !t.isRecurrenceTemplate);
-    const totalCount = periodTasks.length;
-    const completedCount = periodTasks.filter((t) => t.isCompleted).length;
-    const inProgressCount = periodTasks.filter((t) => !t.isCompleted && t.status === "active").length;
-    const shelvedCount = periodTasks.filter((t) => !t.isCompleted && t.status === "shelved").length;
-    const abandonedCount = periodTasks.filter((t) => !t.isCompleted && t.status === "abandoned").length;
-    const todayStr = localTodayStr();
-    const overdueCount = periodTasks.filter((t) => !t.isCompleted && t.status === "active" && t.dueDate && extractLocalDate(t.dueDate) < todayStr).length;
-    const completionDenominator = completedCount + inProgressCount;
-    const completionRate = completionDenominator === 0 ? 0 : Math.round((completedCount / completionDenominator) * 100);
-
-    const statsRow = stickyHeader.createDiv({ cls: "todo-goal-stats-row" });
-    const addStatCard = (label: string, value: string, icon: string, extraCls?: string) => {
-      const card = statsRow.createDiv({ cls: "todo-goal-stat-card" + (extraCls ? " " + extraCls : "") });
-      const top = card.createDiv({ cls: "todo-goal-stat-top" });
-      const iconEl = top.createSpan({ cls: "todo-goal-stat-icon" });
-      setIcon(iconEl, icon);
-      top.createSpan({ cls: "todo-goal-stat-value", text: value });
-      card.createDiv({ cls: "todo-goal-stat-label", text: label });
-    };
-    addStatCard("目标数", String(totalCount), "list-checks", "todo-goal-stat-total");
-    addStatCard("已完成", String(completedCount), "check-circle-2", "todo-goal-stat-completed");
-    addStatCard("进行中", String(inProgressCount), "timer", "todo-goal-stat-inprogress");
-    addStatCard("已搁置", String(shelvedCount), "pause-circle", "todo-goal-stat-shelved");
-    addStatCard("已放弃", String(abandonedCount), "x-circle", "todo-goal-stat-abandoned");
-    addStatCard("逾期", String(overdueCount), "alert-triangle", overdueCount > 0 ? "todo-goal-stat-overdue" : "todo-goal-stat-overdue-empty");
-    addStatCard("完成率", completionRate + "%", "pie-chart", completionRate >= 100 ? "todo-goal-stat-rate-full" : undefined);
-    localizeDom(this.taskListEl);
-
-    let quarterDropZone: HTMLDivElement | null = null;
-    let isDraggingQuarterGoal = false;
-    if (kind === "month" && this.plugin.settings.goalViewMode !== "list") {
-      goalContent.addEventListener("dragover", (ev) => {
-        if (!isDraggingQuarterGoal) return;
-        const rect = goalContent.getBoundingClientRect();
-        const edge = 56;
-        let delta = 0;
-        if (ev.clientY < rect.top + edge) {
-          delta = -Math.ceil(((rect.top + edge - ev.clientY) / edge) * 24);
-        } else if (ev.clientY > rect.bottom - edge) {
-          delta = Math.ceil(((ev.clientY - (rect.bottom - edge)) / edge) * 24);
-        }
-        if (delta !== 0) goalContent.scrollTop += delta;
-      });
-    }
-    // Monthly view: show quarterly goals as draggable cards
-    if (kind === "month" && this.plugin.settings.goalViewMode !== "list") {
-      const quarterKey = getParentPeriodKey("month", periodKey);
-      if (quarterKey) {
-        const quarterTasks = this.plugin.taskService.getByPlanKindAndPeriod("quarter", quarterKey);
-        const qSection = goalContent.createDiv({ cls: "todo-goal-quarter-section" });
-        const qLabel = qSection.createDiv({ cls: "todo-goal-quarter-label", text: isEnglish() ? this.localizedSubGroupLabel("quarter", quarterKey) + " Goals" : subGroupLabel("quarter", quarterKey) + " 目标" });
-        const qScroll = qSection.createDiv({ cls: "todo-goal-quarter-scroll" });
-        for (const qt of quarterTasks) {
-          const qCard = qScroll.createDiv({ cls: "todo-goal-quarter-card", attr: { "data-task-id": qt.id, draggable: "true" } });
-          qCard.createSpan({ cls: "todo-goal-quarter-card-title", text: qt.title });
-          const qChildren = this.plugin.taskService.getChildrenOf(qt.id);
-          const qDone = qChildren.filter(c => c.isCompleted).length;
-          if (qChildren.length > 0) {
-            qCard.createSpan({ cls: "todo-goal-quarter-card-meta", text: qDone + "/" + qChildren.length });
-          }
-          qCard.addEventListener("dragstart", (ev) => {
-            ev.dataTransfer!.setData("text/plain", qt.id);
-            isDraggingQuarterGoal = true;
-            qCard.addClass("dragging");
-            quarterDropZone?.addClass("is-active");
-          });
-          qCard.addEventListener("dragend", () => {
-            isDraggingQuarterGoal = false;
-            qCard.removeClass("dragging");
-            quarterDropZone?.removeClass("is-active");
-          });
-        }
-        if (quarterTasks.length === 0) {
-          qScroll.createDiv({ cls: "todo-goal-quarter-empty", text: t("暂无季度目标") });
-        }
-      }
-    }
-
-    if (kind === "month") {
-      quarterDropZone = goalContent.createDiv({ cls: "todo-quarter-goal-drop-zone", text: t("释放以创建同名月度目标") });
-      quarterDropZone.addEventListener("dragover", (ev) => {
-        ev.preventDefault();
-        if (ev.dataTransfer) ev.dataTransfer.dropEffect = "copy";
-      });
-      quarterDropZone.addEventListener("drop", async (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        quarterDropZone?.removeClass("is-active");
-        const dragId = ev.dataTransfer?.getData("text/plain");
-        const quarterGoal = this.plugin.taskService.getAll().find((task) => task.id === dragId && task.planKind === "quarter");
-        if (!quarterGoal || !isCurrentRender()) return;
-
-        const linkedMonthlyGoal = this.plugin.taskService.getChildrenOf(quarterGoal.id)
-          .find((task) => task.planKind === "month" && task.planPeriodKey === periodKey);
-        if (linkedMonthlyGoal) {
-          new Notice(t("该季度目标已关联当前月份目标"));
-          return;
-        }
-
-        const confirmed = await new ConfirmModal(
-          this.app,
-          "是否为当前月份创建同名月度目标，并关联此季度目标？",
-          "创建月度目标",
-          false,
-        ).openAndConfirm();
-        if (!confirmed) return;
-        if (!isCurrentRender()) return;
-
-        const currentMonthGoals = this.plugin.taskService.getByPlanKindAndPeriod("month", periodKey);
-        const sameTitleGoal = currentMonthGoals.find((task) => task.title.trim().toLocaleLowerCase() === quarterGoal.title.trim().toLocaleLowerCase());
-        if (sameTitleGoal) {
-          await this.plugin.taskService.update(sameTitleGoal.id, { parentId: quarterGoal.id });
-        } else {
-          await this.plugin.taskService.create({
-            title: quarterGoal.title,
-            planKind: "month",
-            planPeriodKey: periodKey,
-            parentId: quarterGoal.id,
-            tags: [...quarterGoal.tags],
-            isImportant: quarterGoal.isImportant,
-          });
-        }
-        await this.renderGoalDashboard("month");
-      });
-    }
-
-
-    const modeSwitch = nav.createDiv({ cls: "todo-goal-mode-switch" });
-    const cardModeBtn = modeSwitch.createSpan({ cls: "todo-goal-mode-btn" + (this.plugin.settings.goalViewMode !== "list" ? " active" : ""), text: t("卡片") });
-    const listModeBtn = modeSwitch.createSpan({ cls: "todo-goal-mode-btn" + (this.plugin.settings.goalViewMode === "list" ? " active" : ""), text: t("列表") });
-    cardModeBtn.addEventListener("click", async () => {
-      if (this.plugin.settings.goalViewMode !== "card") {
-        this.plugin.settings.goalViewMode = "card";
-        await this.plugin.saveSettings();
-        cardModeBtn.addClass("active"); listModeBtn.removeClass("active");
-        await this.renderGoalDashboard(kind);
-      }
-    });
-    listModeBtn.addEventListener("click", async () => {
-      if (this.plugin.settings.goalViewMode !== "list") {
-        this.plugin.settings.goalViewMode = "list";
-        await this.plugin.saveSettings();
-        listModeBtn.addClass("active"); cardModeBtn.removeClass("active");
-        await this.renderGoalDashboard(kind);
-      }
-    });
-
-    const goalAllTags = this.plugin.tagService.getAll();
-    const sorted = periodTasks.slice().sort((a, b) => (b.isImportant ? 1 : 0) - (a.isImportant ? 1 : 0));
-
-    if (this.plugin.settings.goalViewMode === "list") {
-      const contentEl = goalContent.createDiv({ cls: "todo-goal-list-content" });
-      this.renderGoalListContent(kind, contentEl, periodKey);
-    } else {
-    const cards = goalContent.createDiv({ cls: "todo-goal-cards" });
-    const goalScrollTarget = cards.createDiv({ cls: "todo-goal-scroll-target" });
-    goalScrollTarget.style.height = "0px";
-
-    if (sorted.length === 0) {
-      const guide = cards.createDiv({ cls: "todo-goal-guide" });
-      guide.createDiv({ text: t(kind === "year" ? "暂无年度目标" : "暂无月度目标") });
-    }
-
-    const BATCH = 40;
-    let goalIdx = 0;
-    const renderGoal = (goal: Task) => {
-      const children = this.plugin.taskService.getChildrenOf(goal.id);
-      const total = children.length;
-      const done = children.filter((c) => c.isCompleted).length;
-      const rate = total === 0 ? null : done / total;
-      const overdue = !goal.isCompleted && !!goal.dueDate && extractLocalDate(goal.dueDate!) < todayStr;
-      // Find parent plan based on period hierarchy (month→quarter, quarter→year)
-      let parent: Task | undefined;
-      // Use explicit parentId first; fall back to period-based lookup
-      parent = this.plugin.taskService.getParentOf(goal.id);
-      if (!parent && (goal.planKind === "month" || goal.planKind === "quarter")) {
-        const parentKey = getParentPeriodKey(goal.planKind, goal.planPeriodKey ?? "");
-        if (parentKey) {
-          const parentKind: PlanKind = goal.planKind === "month" ? "quarter" : "year";
-          parent = this.plugin.taskService.getByPlanKindAndPeriod(parentKind, parentKey)[0];
-        }
-      }
-      const goalTags = (goal.tags || []).map((id) => goalAllTags.find((t) => t.id === id)).filter((t): t is NonNullable<typeof t> => !!t);
-
-      const statusClass = goal.status === "shelved" ? " todo-goal-card-shelved" : goal.status === "abandoned" ? " todo-goal-card-abandoned" : "";
-      const card = cards.createDiv({ cls: "todo-goal-card" + (overdue ? " todo-goal-card-overdue" : "") + statusClass });
-      card.setAttribute("data-goal-id", goal.id);
-      card.tabIndex = 0;
-      card.setAttribute("role", "button");
-
-      // Drop handler: associate dragged quarterly goal with this monthly goal
-      if (kind === "month") {
-        card.addEventListener("dragover", (ev) => { ev.preventDefault(); card.addClass("todo-goal-card-drop-hover"); });
-        card.addEventListener("dragleave", () => { card.removeClass("todo-goal-card-drop-hover"); });
-        card.addEventListener("drop", async (ev) => {
-          ev.preventDefault();
-          card.removeClass("todo-goal-card-drop-hover");
-          const dragId = ev.dataTransfer?.getData("text/plain");
-          if (dragId && dragId !== goal.id) {
-            await this.plugin.taskService.update(goal.id, { parentId: dragId });
-            await this.renderGoalDashboard(kind);
-          }
-        });
-      }
-
-            // row1: checkbox + title + right-aligned parent/tags
-      const row1 = card.createDiv({ cls: "todo-goal-card-row" });
-      const checkbox = row1.createDiv({ cls: "todo-checkbox" + (goal.isCompleted ? " checked" : ""), text: goal.isCompleted ? "✓" : "" });
-      checkbox.addEventListener("click", async (ev) => {
-        ev.stopPropagation();
-        const cur = this.plugin.taskService.getAll().find((t) => t.id === goal.id); if (cur && cur.isCompleted) { await this.plugin.taskService.uncomplete(goal.id); }
-        else { await this.plugin.taskService.complete(goal.id); }
-        this.refreshGoalCardAndStats(goal.id, kind);
-      });
-      row1.createSpan({ cls: "todo-goal-card-title", text: goal.title });
-      if (!goal.isCompleted && goal.status !== "active") {
-        const statusEl = row1.createSpan({ cls: "todo-goal-status-badge" + (goal.status === "shelved" ? " is-shelved" : " is-abandoned") });
-        statusEl.setText(goal.status === "shelved" ? t("已搁置") : t("已放弃"));
-        const restoreBtn = row1.createEl("button", { cls: "todo-goal-restore-btn" });
-        setIcon(restoreBtn, "play-circle");
-        restoreBtn.setAttribute("aria-label", t("恢复为进行中"));
-        restoreBtn.setAttribute("title", t("恢复为进行中"));
-        restoreBtn.addEventListener("click", async (ev) => {
-          ev.stopPropagation();
-          await this.plugin.taskService.update(goal.id, { status: "active" });
-          await this.renderGoalDashboard(kind);
-        });
-      }
-      if (parent || goalTags.length > 0) {
-        const right = row1.createDiv({ cls: "todo-goal-card-right" });
-        if (parent) {
-          const parentLabelMap: Record<string, string> = { life: "人生目标", year: "年度目标", quarter: "季度目标", month: "月度目标" };
-          const parentLabel = parentLabelMap[parent.planKind ?? ""] ?? "上级目标";
-          right.createSpan({ cls: "todo-goal-card-parent-label", text: parentLabel + "：" + parent.title });
-        }
-        if (goalTags.length > 0) {
-          goalTags.forEach((tag, i) => {
-            if (parent && i === 0) {
-              right.createSpan({ cls: "todo-goal-card-dot", text: " · " });
-            } else if (i > 0) {
-              right.createSpan({ cls: "todo-goal-card-dot", text: " · " });
-            }
-            const tagEl = right.createSpan({ cls: "todo-task-tag-label" });
-            const tagIcon = tagEl.createSpan({ cls: "todo-task-tag-icon" });
-            setIcon(tagIcon, tag.icon);
-            tagEl.createSpan({ text: systemTagName(tag) });
-          });
-        }
-      }
-
-      // row2: progress bar + KR count
-      const row2 = card.createDiv({ cls: "todo-goal-card-metrics" });
-      if (rate !== null) {
-        const pct = Math.round(rate * 100);
-        const barWrap = row2.createDiv({ cls: "todo-goal-progress" });
-        const barFill = barWrap.createDiv({ cls: "todo-goal-progress-fill" });
-        barFill.style.width = pct + "%";
-        barWrap.createSpan({ cls: "todo-goal-progress-text", text: pct + "%" });
-      }
-      row2.createSpan({ cls: "todo-goal-metric-item", text: total === 0 ? "KR 0/0" : "KR " + done + "/" + total });
-      if (overdue) row2.createSpan({ cls: "todo-goal-overdue-badge", text: "逾期" });
-
-      // expand button (centered, full width)
-      const expandBtn = card.createDiv({ cls: "todo-goal-expand-btn" });
-      expandBtn.createSpan({ cls: "todo-goal-expand-text", text: "展开 ▾" });
-
-      // expand body
-      const body = card.createDiv({ cls: "todo-goal-card-body todo-goal-card-body-collapsed" });
-      let bodyRendered = false;
-      const openGoal = async () => {
-        this.detailView.clearHistory();
-        this.plugin.settings.selectedTaskId = goal.id;
-        await this.plugin.saveSettings();
-        this.detailView.open(goal.id);
-        this.highlightSelectedTask(goal.id);
-        const layout = this.containerEl.querySelector(".todo-layout");
-        if (layout) layout.addClass("todo-layout-detail-open");
-      };
-      card.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); void openGoal(); } });
-      expandBtn.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        const collapsed = body.classList.contains("todo-goal-card-body-collapsed");
-        if (collapsed && !bodyRendered) {
-          bodyRendered = true;
-          const subKind = kind === "year" ? "quarter" : "week";
-          const subKeys = getSubPeriodKeysForParent(kind, periodKey);
-          const grouped = new Map<string, { task: Task; completed: boolean }[]>();
-          for (const sk of subKeys) grouped.set(sk, []);
-          for (const c of children) {
-            const key = c.planPeriodKey && grouped.has(c.planPeriodKey) ? c.planPeriodKey : null;
-            if (key) grouped.get(key)!.push({ task: c, completed: c.isCompleted });
-          }
-          let hasAny = false;
-          const KR_LIMIT = 50;
-          let krRendered = 0;
-          const renderKRItem = (sk: string, it: { task: Task; completed: boolean }, goalId: string, k: "year" | "month") => {
-            const krOverdue = !it.completed && !!it.task.dueDate && extractLocalDate(it.task.dueDate!) < todayStr;
-            const row = body.createDiv({ cls: "todo-goal-kr-item" + (it.completed ? " todo-goal-kr-done" : "") + (krOverdue ? " todo-goal-kr-overdue" : "") });
-            const krCheck = row.createDiv({ cls: "todo-checkbox" + (it.completed ? " checked" : ""), text: it.completed ? "✓" : "" });
-            krCheck.addEventListener("click", async (ev) => {
-              ev.stopPropagation();
-              if (it.completed) { await this.plugin.taskService.uncomplete(it.task.id); }
-              else { await this.plugin.taskService.complete(it.task.id); }
-              it.completed = !it.completed;
-              krCheck.setText(it.completed ? "✓" : ""); krCheck.toggleClass("checked", it.completed);
-              row.toggleClass("todo-goal-kr-done", it.completed);
-              this.refreshGoalCardAndStats(goalId, k);
-            });
-            row.createSpan({ cls: "todo-goal-kr-title", text: it.task.title });
-            row.addEventListener("click", async (ev) => {
-              ev.stopPropagation();
-              this.detailView.clearHistory();
-              this.plugin.settings.selectedTaskId = it.task.id;
-              await this.plugin.saveSettings();
-              this.detailView.open(it.task.id);
-              this.highlightSelectedTask(it.task.id);
-              const lyt = this.containerEl.querySelector(".todo-layout");
-              if (lyt) lyt.addClass("todo-layout-detail-open");
-            });
-          };
-          for (const [sk, items] of grouped) {
-            hasAny = true;
-            const title = this.localizedSubGroupLabel(subKind, sk);
-            const sgHeader = body.createDiv({ cls: "todo-goal-subgroup-title" });
-            sgHeader.createSpan({ text: title });
-            const addBtn = sgHeader.createSpan({ cls: "todo-goal-subgroup-add", text: " ＋" });
-            addBtn.addEventListener("click", (ev) => {
-              ev.stopPropagation();
-              if (this.isMobile()) {
-                void this.promptPlanCreate(subKind, sk, goal.id, goal.tags ? [...goal.tags] : []);
-                return;
-              }
-              if (sgHeader.dataset.addOpen === "1") return;
-              sgHeader.dataset.addOpen = "1";
-              const inputWrap = document.createElement("div");
-              inputWrap.className = "todo-goal-subgroup-inline-input";
-              sgHeader.after(inputWrap);
-              const input = inputWrap.createEl("input", { type: "text", placeholder: "输入KR标题..." });
-              input.focus();
-              let saved = false;
-              const save = async () => {
-                if (saved || !input.value.trim()) { if (inputWrap.isConnected) inputWrap.remove(); sgHeader.dataset.addOpen = "0"; return; }
-                saved = true;
-                try {
-                  const newTask = await this.plugin.taskService.create({
-                    title: input.value.trim(),
-                    planKind: subKind,
-                    planPeriodKey: sk,
-                    parentId: goal.id,
-                    tags: goal.tags ? [...goal.tags] : [],
-                  });
-                  // Re-render the dashboard (preserves expanded state via expandedGoalIds)
-                  window.setTimeout(() => { void this.renderGoalDashboard(kind, true); }, 0);
-                } catch (e) {
-                  console.error("[ObsidianTodo] Failed to create KR:", e);
-                }
-              };
-              input.addEventListener("keydown", (e) => {
-                e.stopPropagation();
-                if (e.key === "Enter") { e.preventDefault(); void save(); }
-                if (e.key === "Escape") { inputWrap.remove(); sgHeader.dataset.addOpen = "0"; }
-              });
-              input.addEventListener("blur", () => { void save(); });
-            });
-            for (const it of items) {
-              if (krRendered < KR_LIMIT) { renderKRItem(sk, it, goal.id, kind); krRendered++; }
-            }
-          }
-          const remaining = children.length - krRendered;
-          if (remaining > 0) {
-            const moreBtn = body.createEl("button", { cls: "todo-goal-kr-more", text: "查看更多KR（" + remaining + "）" });
-            moreBtn.addEventListener("click", (ev) => {
-              ev.stopPropagation();
-              let left = remaining;
-              for (const [sk, items] of grouped) {
-                for (const it of items) {
-                  if (left <= 0) break;
-                  renderKRItem(sk, it, goal.id, kind);
-                  left--;
-                }
-                if (left <= 0) break;
-              }
-              moreBtn.remove();
-            });
-          }
-
-        }
-        body.classList.toggle("todo-goal-card-body-collapsed", !collapsed);
-        if (collapsed) this.expandedGoalIds.add(goal.id); else this.expandedGoalIds.delete(goal.id);
-        const et = expandBtn.querySelector(".todo-goal-expand-text") as HTMLElement; if (et) et.setText(collapsed ? "收起 ▴" : "展开 ▾");
-      });
-
-      // Auto-expand previously expanded cards
-      if (this.expandedGoalIds.has(goal.id)) expandBtn.click();
-
-      card.addEventListener("contextmenu", (ev) => {
-        ev.preventDefault();
-        ev.stopPropagation();
-        const menu = new Menu();
-
-        // Toggle complete
-        menu.addItem((item) =>
-          item
-            .setTitle(goal.isCompleted ? "\u6807\u8BB0\u4E3A\u672A\u5B8C\u6210" : "\u6807\u8BB0\u4E3A\u5DF2\u5B8C\u6210")
-            .setIcon(goal.isCompleted ? "circle" : "check-circle")
-            .onClick(async () => {
-              if (goal.isCompleted) { await this.plugin.taskService.uncomplete(goal.id); }
-              else { await this.plugin.taskService.complete(goal.id); }
-              this.refreshGoalCardAndStats(goal.id, kind);
-            }),
-        );
-
-
-
-        menu.addSeparator();
-
-        if (goal.planKind === "month" || (goal.planKind === "week" && kind === "month")) {
-          menu.addItem((item) =>
-            item
-              .setTitle(t("移动到周期..."))
-              .setIcon("calendar-range")
-              .onClick(() => this.showGoalPeriodMoveMenu(goal, kind)),
-          );
-          menu.addSeparator();
-        }
-
-        // Status actions follow the current state.
-        if (goal.status === "active") {
-          menu.addItem((item) =>
-            item
-              .setTitle("\u6401\u7F6E\u76EE\u6807")
-              .setIcon("pause-circle")
-              .onClick(async () => {
-                await this.plugin.taskService.update(goal.id, { status: "shelved" });
-                await this.renderGoalDashboard(kind);
-              }),
-          );
-          menu.addItem((item) =>
-            item
-              .setTitle("\u653E\u5F03\u76EE\u6807")
-              .setIcon("x-circle")
-              .onClick(async () => {
-                await this.plugin.taskService.update(goal.id, { status: "abandoned" });
-                await this.renderGoalDashboard(kind);
-              }),
-          );
-        } else if (goal.status === "shelved") {
-          menu.addItem((item) =>
-            item
-              .setTitle("\u6062\u590D\u4E3A\u8FDB\u884C\u4E2D")
-              .setIcon("play-circle")
-              .onClick(async () => {
-                await this.plugin.taskService.update(goal.id, { status: "active" });
-                await this.renderGoalDashboard(kind);
-              }),
-          );
-          menu.addItem((item) =>
-            item
-              .setTitle("\u653E\u5F03\u76EE\u6807")
-              .setIcon("x-circle")
-              .onClick(async () => {
-                await this.plugin.taskService.update(goal.id, { status: "abandoned" });
-                await this.renderGoalDashboard(kind);
-              }),
-          );
-        } else if (goal.status === "abandoned") {
-          menu.addItem((item) =>
-            item
-              .setTitle("\u6062\u590D\u4E3A\u8FDB\u884C\u4E2D")
-              .setIcon("play-circle")
-              .onClick(async () => {
-                await this.plugin.taskService.update(goal.id, { status: "active" });
-                await this.renderGoalDashboard(kind);
-              }),
-          );
-        }
-
-        menu.addSeparator();
-
-        // Delete
-        menu.addItem((item) =>
-          item
-            .setTitle("\u5220\u9664\u76EE\u6807")
-            .setIcon("trash")
-            .onClick(async () => {
-              await this.plugin.taskService.delete(goal.id);
-              this.renderGoalDashboard(kind, true);
-            }),
-        );
-
-        menu.showAtPosition({ x: ev.clientX, y: ev.clientY });
-      });
-      card.addEventListener("click", () => { void openGoal(); });
-    };
-
-    const appendBatch = () => {
-      const end = Math.min(sorted.length, goalIdx + BATCH);
-      for (; goalIdx < end; goalIdx++) renderGoal(sorted[goalIdx]);
-    };
-    appendBatch();
-    if (goalIdx < sorted.length) {
-      const sentinel = cards.createDiv({ cls: "todo-goal-sentinel" });
-      const obs = new IntersectionObserver((entries) => {
-        if (entries.some((e) => e.isIntersecting)) { appendBatch(); if (goalIdx >= sorted.length) { obs.disconnect(); sentinel.remove(); } }
-        }, { root: goalContent });
-      obs.observe(sentinel);
-    }
-
-    const firstCard = cards.querySelector(".todo-goal-card") as HTMLElement | null;
-    const targetEl = firstCard ?? statsRow;
-    if (preserveScrollPosition) {
-      goalContent.scrollTop = previousScrollTop;
-    } else if (targetEl) {
-      targetEl.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
-    }
+  private renderGoalDashboard(kind: "year" | "month", preserveScrollPosition = false): Promise<void> {
+    return this.goalDashboardRenderer.renderGoalDashboard(kind, preserveScrollPosition);
   }
 
-  private refreshGoalCardAndStats(goalId: string, kind: "year" | "month"): void {
-    const card = this.taskListEl.querySelector(`[data-goal-id="${goalId}"]`) as HTMLElement | null;
-    if (!card) return;
-    const goal = this.plugin.taskService.getAll().find((t) => t.id === goalId);
-    if (!goal) return;
-
-    // update check symbol
-    const checkEl = card.querySelector(".todo-checkbox") as HTMLElement | null;
-    if (checkEl) { checkEl.setText(goal.isCompleted ? "✓" : ""); checkEl.toggleClass("checked", goal.isCompleted); }
-
-    // update title completed style
-    const titleEl = card.querySelector(".todo-goal-card-title") as HTMLElement | null;
-    if (titleEl) titleEl.toggleClass("completed", goal.isCompleted);
-
-    // recalculate KR progress
-    const children = this.plugin.taskService.getChildrenOf(goalId);
-    const total = children.length;
-    const done = children.filter((c) => c.isCompleted).length;
-    const rate = total === 0 ? null : done / total;
-
-    // update KR label (second metric-item)
-    const metricsRow = card.querySelector(".todo-goal-card-metrics");
-    if (metricsRow) {
-      const items = metricsRow.querySelectorAll(".todo-goal-metric-item");
-      for (const el of Array.from(items)) {
-        if (el.textContent && el.textContent.startsWith("KR")) {
-          (el as HTMLElement).setText(total === 0 ? "KR 0/0" : "KR " + done + "/" + total);
-        }
-      }
-    }
-
-    // update progress bar (create if missing)
-    let barFill = card.querySelector(".todo-goal-progress-fill") as HTMLElement | null;
-    let barText = card.querySelector(".todo-goal-progress-text") as HTMLElement | null;
-    if (rate !== null && !barFill && metricsRow) {
-      const barWrap = metricsRow.createDiv({ cls: "todo-goal-progress" });
-      barFill = barWrap.createDiv({ cls: "todo-goal-progress-fill" });
-      barText = barWrap.createSpan({ cls: "todo-goal-progress-text" });
-    }
-    if (rate !== null) {
-      const pct = Math.round(rate * 100);
-      if (barFill) barFill.style.width = pct + "%";
-      if (barText) barText.setText(pct + "%");
-    }
-
-    // update overdue state
-    const todayStr = localTodayStr();
-    const overdue = !goal.isCompleted && !!goal.dueDate && extractLocalDate(goal.dueDate!) < todayStr;
-    card.toggleClass("todo-goal-card-overdue", overdue);
-    let overdueBadge = card.querySelector(".todo-goal-overdue-badge") as HTMLElement | null;
-    if (overdue && !overdueBadge) {
-      const r2 = card.querySelector(".todo-goal-card-metrics");
-      if (r2) r2.createSpan({ cls: "todo-goal-overdue-badge", text: "\u903E\u671F" });
-    } else if (!overdue && overdueBadge) {
-      overdueBadge.remove();
-    }
-
-    // update stats row
-    const goalAllTasks = this.plugin.taskService.getAll();
-    const periodTasks = goalAllTasks.filter((t) => t.planKind === kind && t.planPeriodKey === this.goalPeriodKey && !t.isDeleted && !t.isRecurrenceTemplate);
-    const totalCount = periodTasks.length;
-    const completedCount = periodTasks.filter((t) => t.isCompleted).length;
-    const inProgressCount = periodTasks.filter((t) => !t.isCompleted && t.status === "active").length;
-    const shelvedCount = periodTasks.filter((t) => !t.isCompleted && t.status === "shelved").length;
-    const abandonedCount = periodTasks.filter((t) => !t.isCompleted && t.status === "abandoned").length;
-    const overdueCount = periodTasks.filter((t) => !t.isCompleted && t.status === "active" && t.dueDate && extractLocalDate(t.dueDate) < todayStr).length;
-    const completionDenominator = completedCount + inProgressCount;
-    const completionRate = completionDenominator === 0 ? 0 : Math.round((completedCount / completionDenominator) * 100);
-
-    const statsRow = this.taskListEl.querySelector(".todo-goal-stats-row") as HTMLElement | null;
-    if (statsRow) {
-      const values = statsRow.querySelectorAll(".todo-goal-stat-value");
-      if (values[0]) values[0].setText(String(totalCount));
-      if (values[1]) values[1].setText(String(completedCount));
-      if (values[2]) values[2].setText(String(inProgressCount));
-      if (values[3]) {
-        values[3].setText(String(shelvedCount));
-      }
-      if (values[4]) {
-        values[4].setText(String(abandonedCount));
-      }
-      if (values[5]) {
-        values[5].setText(String(overdueCount));
-        const oc = values[5].closest(".todo-goal-stat-card") as HTMLElement | null;
-        if (oc) { oc.removeClass("todo-goal-stat-overdue"); oc.removeClass("todo-goal-stat-overdue-empty"); oc.addClass(overdueCount > 0 ? "todo-goal-stat-overdue" : "todo-goal-stat-overdue-empty"); }
-      }
-      if (values[6]) {
-        values[6].setText(completionRate + "%");
-        const rc = values[6].closest(".todo-goal-stat-card") as HTMLElement | null;
-        if (rc) { rc.removeClass("todo-goal-stat-rate-full"); if (completionRate >= 100) rc.addClass("todo-goal-stat-rate-full"); }
-      }
-    }
+  private renderLifePlanView(): Promise<void> {
+    return this.lifePlanRenderer.render(this.taskListEl, this.plugin.settings.birthday);
   }
 
-  private renderGoalListContent(kind: "year" | "month", container: HTMLElement, periodKey: string): void {
-    const ts = this.plugin.taskService;
-    const subKind: PlanKind = kind === "year" ? "quarter" : "week";
-    const subKeys = getSubPeriodKeysForParent(kind, periodKey);
-    const currentSubKey = currentPeriodKey(subKind);
-    for (const sk of periodKeySort(subKind, subKeys)) {
-      const subTasks = ts.getByPlanKindAndPeriod(subKind, sk);
-      const sg = container.createDiv({ cls: "todo-plan-subgroup" });
-      const sh = sg.createDiv({ cls: "todo-plan-subgroup-header" });
-      const expanded = sk === currentSubKey;
-      const sa = sh.createSpan({ cls: "todo-plan-group-arrow" + (expanded ? "" : " collapsed"), text: "▼" });
-      sh.createSpan({ cls: "todo-plan-subgroup-label", text: this.localizedSubGroupLabel(subKind, sk) });
-      sh.createSpan({ cls: "todo-plan-group-count", text: String(subTasks.length) });
-      const sab = sh.createSpan({ cls: "todo-plan-add-btn", text: "+" });
-      sab.title = "新建任务";
-      const sb = sg.createDiv({ cls: "todo-plan-group-body" });
-      sb.dataset.periodKey = sk;
-      if (!expanded) sb.style.display = "none";
-      for (const task of subTasks) { this.renderTaskRow(sb, task, "plan"); }
-      this.setupPlanAddButton(sab, sb, subKind, sk);
-      sh.addEventListener("click", (ev) => {
-        if ((ev.target as HTMLElement).closest(".todo-plan-add-btn")) return;
-        const open = sb.style.display === "none";
-        sb.style.display = open ? "" : "none";
-        sa.toggleClass("collapsed", !open);
-      });
-    }
+  private async openPlanTask(taskId: string): Promise<void> {
+    this.detailView.clearHistory();
+    this.plugin.settings.selectedTaskId = taskId;
+    await this.plugin.saveSettings();
+    this.detailView.open(taskId);
+    this.highlightSelectedTask(taskId);
+    const layout = this.containerEl.querySelector(".todo-layout");
+    if (layout) layout.addClass("todo-layout-detail-open");
   }
+
 
   private localizedPeriodLabel(kind: PlanKind, key: string): string {
-    if (!isEnglish()) return periodLabel(kind, key);
-    switch (kind) {
-      case "year": return `${key} Year Plan`;
-      case "quarter": {
-        const parts = key.split("-Q");
-        return `${parts[0]} Q${parts[1]} Quarter Plan`;
-      }
-      case "month": {
-        const parts = key.split("-");
-        const date = new Date(Number(parts[0]), Number(parts[1]) - 1, 1);
-        const month = new Intl.DateTimeFormat("en-US", { month: "long" }).format(date);
-        return `${month} ${parts[0]} Month Plan`;
-      }
-      case "week": {
-        const parts = key.split("-W");
-        return `${parts[0]} W${parts[1]} Week Plan`;
-      }
-      default: return periodLabel(kind, key);
-    }
+    return getLocalizedPeriodLabel(kind, key, isEnglish());
   }
 
   private localizedSubGroupLabel(kind: PlanKind, key: string): string {
-    if (!isEnglish()) return subGroupLabel(kind, key);
-    switch (kind) {
-      case "quarter": return `Q${key.split("-Q")[1]} Quarter Plan`;
-      case "week": return `W${key.split("-W")[1]} Week Plan`;
-      default: return this.localizedPeriodLabel(kind, key);
-    }
+    return getLocalizedSubGroupLabel(kind, key, isEnglish());
   }
-
-  private async renderLifePlanView(): Promise<void> {
-    this.taskListEl.empty();
-    this.taskListEl.removeClass("todo-goal-active");
-    this.taskListEl.addClass("todo-life-active");
-    const birthday = this.plugin.settings.birthday;
-    if (!birthday) {
-      const hint = this.taskListEl.createDiv({ cls: "todo-life-empty" });
-      hint.createSpan({ text: "\u8bf7\u5148\u5728\u8bbe\u7f6e\u4e2d\u586b\u5199\u751f\u65e5\uff0c\u624d\u80fd\u4f7f\u7528\u4eba\u751f\u8ba1\u5212\u89c6\u56fe\u3002" });
-      return;
-    }
-    const ts = this.plugin.taskService;
-    const allTasks = ts.getAll();
-    const lifeTasks = allTasks.filter((t) => t.planKind === "life");
-    const allTags = this.plugin.tagService.getAll();
-    const withAge: { task: Task; age: number }[] = [];
-    const noAge: Task[] = [];
-    for (const t of lifeTasks) {
-      if (t.planPeriodKey) {
-        withAge.push({ task: t, age: parseInt(t.planPeriodKey, 10) });
-      } else if (t.dueDate) {
-        const age = ageFromDueDate(birthday, t.dueDate);
-        withAge.push({ task: t, age });
-      } else {
-        noAge.push(t);
-      }
-    }
-    // Sort by age ascending
-    withAge.sort((a, b) => a.age - b.age);
-    // Merge into age groups
-    const ageGroups = new Map<number, Task[]>();
-    for (const { task, age } of withAge) {
-      if (!ageGroups.has(age)) ageGroups.set(age, []);
-      ageGroups.get(age)!.push(task);
-    }
-    const curAge = currentAge(birthday);
-    const birthdayYear = new Date(birthday).getFullYear();
-    const container = this.taskListEl.createDiv({ cls: "todo-life-timeline" });
-    for (const [age, tasks] of ageGroups) {
-      const isCurrent = age === curAge;
-      const timeState = age < curAge ? "past" : (age > curAge ? "future" : "current");
-      const year = birthdayYear + age;
-      const node = container.createDiv({ cls: "todo-life-node is-" + timeState });
-      node.setAttribute("data-age-key", String(age));
-      const ageCol = node.createDiv({ cls: "todo-life-age-col" });
-      const ageMain = ageCol.createDiv({ cls: "todo-life-age-main" });
-      ageMain.createSpan({ cls: "todo-life-age-num", text: String(age) });
-      ageMain.createSpan({ cls: "todo-life-age-label", text: "\u5c81" });
-      ageCol.createDiv({ cls: "todo-life-age-year", text: String(year) + "\u5e74" });
-      const lineCol = node.createDiv({ cls: "todo-life-line-col" });
-      lineCol.createDiv({ cls: "todo-life-dot" + (isCurrent ? " todo-life-dot-current" : "") });
-      const contentCol = node.createDiv({ cls: "todo-life-content-col" });
-      for (const t of tasks) {
-        const card = contentCol.createDiv({ cls: "todo-life-card", attr: { "data-task-id": t.id } });
-        const lifeCheckbox = card.createDiv({ cls: "todo-checkbox" + (t.isCompleted ? " checked" : ""), text: t.isCompleted ? "\u2713" : "" });
-        lifeCheckbox.addEventListener("click", async (ev) => {
-          ev.stopPropagation();
-          if (t.isCompleted) { await this.plugin.taskService.uncomplete(t.id); } else { await this.plugin.taskService.complete(t.id); }
-          await this.renderLifePlanView();
-        });
-        card.createSpan({ cls: "todo-life-card-title" + (t.isCompleted ? " completed" : ""), text: t.title });
-        const cardTags0 = (t.tags || []).map((id) => allTags.find((tg) => tg.id === id)).filter((tg): tg is NonNullable<typeof tg> => !!tg);
-        if (cardTags0.length > 0) {
-          const tagRow = card.createDiv({ cls: "todo-life-card-tags" });
-          cardTags0.forEach((tag) => {
-            const chip = tagRow.createSpan({ cls: "todo-life-card-tag" });
-            const chipIcon = chip.createSpan({ cls: "todo-life-card-tag-icon" });
-            setIcon(chipIcon, tag.icon);
-            chip.createSpan({ text: systemTagName(tag) });
-          });
-        }
-        card.addEventListener("click", async () => {
-          this.detailView.clearHistory();
-          this.plugin.settings.selectedTaskId = t.id;
-          await this.plugin.saveSettings();
-          this.detailView.open(t.id);
-          this.highlightSelectedTask(t.id);
-          const layout = this.containerEl.querySelector(".todo-layout");
-          if (layout) layout.addClass("todo-layout-detail-open");
-        });
-      }
-    }
-    // Divider + no-age group
-    if (noAge.length > 0) {
-      container.createDiv({ cls: "todo-life-divider" });
-      const naNode = container.createDiv({ cls: "todo-life-node" });
-      const naAgeCol = naNode.createDiv({ cls: "todo-life-age-col" });
-      naAgeCol.createDiv({ cls: "todo-life-age-na", text: "\u672a\u8bbe\u5b9a\u5e74\u9f84" });
-      const naLineCol = naNode.createDiv({ cls: "todo-life-line-col" });
-      naLineCol.createDiv({ cls: "todo-life-dot" });
-      const naContent = naNode.createDiv({ cls: "todo-life-content-col" });
-      for (const t of noAge) {
-        const card = naContent.createDiv({ cls: "todo-life-card", attr: { "data-task-id": t.id } });
-        const lifeCheckbox2 = card.createDiv({ cls: "todo-checkbox" + (t.isCompleted ? " checked" : ""), text: t.isCompleted ? "\u2713" : "" });
-        lifeCheckbox2.addEventListener("click", async (ev) => {
-          ev.stopPropagation();
-          if (t.isCompleted) { await this.plugin.taskService.uncomplete(t.id); } else { await this.plugin.taskService.complete(t.id); }
-          await this.renderLifePlanView();
-        });
-        card.createSpan({ cls: "todo-life-card-title" + (t.isCompleted ? " completed" : ""), text: t.title });
-        const cardTags1 = (t.tags || []).map((id) => allTags.find((tg) => tg.id === id)).filter((tg): tg is NonNullable<typeof tg> => !!tg);
-        if (cardTags1.length > 0) {
-          const tagRow = card.createDiv({ cls: "todo-life-card-tags" });
-          cardTags1.forEach((tag) => {
-            const chip = tagRow.createSpan({ cls: "todo-life-card-tag" });
-            const chipIcon = chip.createSpan({ cls: "todo-life-card-tag-icon" });
-            setIcon(chipIcon, tag.icon);
-            chip.createSpan({ text: systemTagName(tag) });
-          });
-        }
-        card.addEventListener("click", async () => {
-          this.detailView.clearHistory();
-          this.plugin.settings.selectedTaskId = t.id;
-          await this.plugin.saveSettings();
-          this.detailView.open(t.id);
-          this.highlightSelectedTask(t.id);
-          const layout = this.containerEl.querySelector(".todo-layout");
-          if (layout) layout.addClass("todo-layout-detail-open");
-        });
-      }
-    }
-    // Auto-scroll to current age
-    if (ageGroups.has(curAge)) {
-      const curNode = container.querySelector(".todo-life-node.is-current");
-      if (curNode) {
-        curNode.scrollIntoView({ block: "center" });
-      }
-    }
-
-  }
-
-
 
   private getScheduleTitle(): string {
     const dowNames = isEnglish() ? ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"] : ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
@@ -3401,51 +2524,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   }
 
   private layoutOverlapTasks(tasks: Task[]): { task: Task; col: number; totalCols: number }[] {
-    if (!tasks.length) return [];
-    const HOUR_HEIGHT = 60;
-    const items = tasks
-      .filter(t => t.startDate && t.dueDate)
-      .map(t => ({
-        task: t,
-        start: new Date(t.startDate!).getTime(),
-        end: new Date(t.dueDate!).getTime(),
-      }))
-      .sort((a, b) => a.start - b.start || (b.end - b.start) - (a.end - a.start));
-
-    const columns: number[] = [];
-    const placements: { task: Task; start: number; end: number; col: number }[] = [];
-
-    for (const item of items) {
-      let col = columns.findIndex(endTime => endTime <= item.start);
-      if (col === -1) { col = columns.length; columns.push(0); }
-      columns[col] = item.end;
-      placements.push({ task: item.task, start: item.start, end: item.end, col });
-    }
-
-    type PlacementItem = { task: Task; start: number; end: number; col: number };
-    const groups: PlacementItem[][] = [];
-    let curGroup: PlacementItem[] = [];
-    let groupMaxEnd = 0;
-    for (const p of placements) {
-      if (curGroup.length === 0 || p.start < groupMaxEnd) {
-        curGroup.push(p);
-        groupMaxEnd = Math.max(groupMaxEnd, p.end);
-      } else {
-        groups.push(curGroup);
-        curGroup = [p];
-        groupMaxEnd = p.end;
-      }
-    }
-    if (curGroup.length) groups.push(curGroup);
-
-    const result: { task: Task; col: number; totalCols: number }[] = [];
-    for (const group of groups) {
-      const totalCols = Math.max(...group.map(p => p.col)) + 1;
-      for (const p of group) {
-        result.push({ task: p.task, col: p.col, totalCols });
-      }
-    }
-    return result;
+    return layoutOverlappingTasks(tasks);
   }
 
   private lightenColor(hex: string, factor: number): string {
@@ -3596,86 +2675,28 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     container.empty();
     switch (this.scheduleMode) {
       case "month":
-        this.renderMonthView(container);
+        this.scheduleRenderer.renderMonth(container, {
+          year: this.scheduleYear,
+          month: this.scheduleMonth,
+          date: this.scheduleDate,
+        });
         break;
       case "day":
-        this.renderDayView(container);
+        this.scheduleRenderer.renderDay(container, {
+          year: this.scheduleYear,
+          month: this.scheduleMonth,
+          date: this.scheduleDate,
+        });
         break;
       case "week":
-        this.renderWeekView(container);
+        this.scheduleRenderer.renderWeek(container, {
+          year: this.scheduleYear,
+          month: this.scheduleMonth,
+          date: this.scheduleDate,
+        });
         break;
     }
   }
-
-  private renderMonthView(container: HTMLDivElement): void {
-    const weekdays = isEnglish() ? ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] : ["日", "一", "二", "三", "四", "五", "六"];
-    const weekdaysEl = container.createDiv({ cls: "todo-schedule-weekdays" });
-    for (const wd of weekdays) { weekdaysEl.createSpan({ text: wd }); }
-    const grid = container.createDiv({ cls: "todo-schedule-grid" });
-    const firstDay = new Date(this.scheduleYear, this.scheduleMonth, 1);
-    const startDow = firstDay.getDay();
-    const daysInMonth = new Date(this.scheduleYear, this.scheduleMonth + 1, 0).getDate();
-    const totalCells = Math.ceil((startDow + daysInMonth) / 7) * 7;
-    grid.style.setProperty("--schedule-rows", String(totalCells / 7));
-    const prevMonthDays = new Date(this.scheduleYear, this.scheduleMonth, 0).getDate();
-    const today = new Date();
-    const todayStr = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
-    for (let i = 0; i < totalCells; i++) {
-      let dayNum: number;
-      let dateStr: string;
-      let isOther = false;
-      if (i < startDow) {
-        dayNum = prevMonthDays - startDow + i + 1;
-        const pm = this.scheduleMonth === 0 ? 11 : this.scheduleMonth - 1;
-        const py = this.scheduleMonth === 0 ? this.scheduleYear - 1 : this.scheduleYear;
-        dateStr = py + "-" + String(pm + 1).padStart(2, "0") + "-" + String(dayNum).padStart(2, "0");
-        isOther = true;
-      } else if (i >= startDow + daysInMonth) {
-        dayNum = i - startDow - daysInMonth + 1;
-        const nm = this.scheduleMonth === 11 ? 0 : this.scheduleMonth + 1;
-        const ny = this.scheduleMonth === 11 ? this.scheduleYear + 1 : this.scheduleYear;
-        dateStr = ny + "-" + String(nm + 1).padStart(2, "0") + "-" + String(dayNum).padStart(2, "0");
-        isOther = true;
-      } else {
-        dayNum = i - startDow + 1;
-        dateStr = this.scheduleYear + "-" + String(this.scheduleMonth + 1).padStart(2, "0") + "-" + String(dayNum).padStart(2, "0");
-      }
-      const cell = grid.createDiv({ cls: "todo-schedule-cell", attr: { "data-date-str": dateStr } });
-      if (isOther) cell.addClass("todo-schedule-other-month");
-      if (dateStr === todayStr) cell.addClass("todo-schedule-today");
-      const dow = i % 7;
-      if (dow === 0 || dow === 6) cell.addClass("todo-schedule-weekend");
-      cell.createDiv({ cls: "todo-schedule-cell-date", text: String(dayNum) });
-      if (!isEnglish() && this.plugin.settings.showLunarCalendar) {
-        const [yStr, mStr, dStr] = dateStr.split("-");
-        const lunarText = getLunarDisplayText(+yStr, +mStr, +dStr);
-        const lunarCls = "todo-schedule-cell-lunar" + (isLunarSpecialDay(+yStr, +mStr, +dStr) ? " todo-lunar-festival" : "");
-        cell.createSpan({ cls: lunarCls, text: lunarText });
-      }
-      cell.createDiv({ cls: "todo-schedule-cell-tasks" });
-    }
-    // 渲染任务到月历格子
-    const allTasks = this.plugin.taskService.getAll();
-    const monthTasks = allTasks.filter(t => this.isVisibleInSchedule(t, "month") && t.dueDate);
-    for (const task of monthTasks) {
-      const taskDate = extractLocalDate(task.dueDate!);
-      const targetCell = grid.querySelector('[data-date-str="' + taskDate + '"] .todo-schedule-cell-tasks') as HTMLElement;
-      if (!targetCell) continue;
-      const card = targetCell.createDiv({ cls: "todo-month-task-card" + (task.isCompleted ? " todo-schedule-completed" : "") });
-      card.style.backgroundColor = this.getTaskBlockColor(task);
-      card.style.color = this.getContrastColor(this.getTaskBlockColor(task));
-      card.createSpan({ cls: "todo-month-task-title", text: task.title });
-      if (task.recurrence) {
-        const recIcon = card.createSpan({ cls: "todo-month-task-rec" });
-        setIcon(recIcon, "repeat");
-      }
-      card.addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        this.detailView.open(task.id);
-      });
-    }
-  }
-
 
   private renderScheduleTaskCard(container: HTMLElement, task: Task): void {
     const sd = new Date(task.startDate!);
@@ -3784,6 +2805,92 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     });
   }
 
+  private startAllDayDrag(event: MouseEvent, task: Task, card: HTMLElement, grid: HTMLDivElement, dateStr: string): void {
+    const ghost = grid.createDiv({ cls: "todo-drag-ghost" });
+    ghost.style.backgroundColor = this.getTaskBlockColor(task);
+    ghost.style.left = "48px";
+    ghost.style.right = "4px";
+    ghost.style.width = "auto";
+    ghost.style.top = "0px";
+    ghost.style.height = "60px";
+    this.dragState = {
+      type: "move",
+      taskId: task.id,
+      startY: event.clientY,
+      startX: event.clientX,
+      origStartMin: 0,
+      origEndMin: 60,
+      dateStr,
+      hourHeight: 60,
+      ghost,
+      card,
+      moved: false,
+      colCount: 1,
+      columnsRect: null,
+      dateStrs: [dateStr],
+      currentColIdx: 0,
+      ghostBaseLeft: 0,
+      scrollContainer: grid,
+      scrollRAF: null,
+      source: "allday",
+      origScrollTop: grid.scrollTop || 0,
+      columnsEl: null,
+    };
+    card.addClass("dragging");
+  }
+
+  private startWeekAllDayDrag(event: MouseEvent, task: Task, card: HTMLElement, grid: HTMLDivElement, weekStart: Date, columnIndex: number): void {
+    const columnsEl = grid.querySelector(".todo-week-columns") as HTMLElement | null;
+    const ghostParent = columnsEl || grid;
+    const ghost = ghostParent.createDiv({ cls: "todo-drag-ghost" });
+    const colCount = 7;
+    const columnsRect = columnsEl?.getBoundingClientRect() || null;
+    const colWidth = columnsRect ? columnsRect.width / colCount : 0;
+    const dateStrs = Array.from({ length: 7 }, (_, index) => {
+      const date = new Date(weekStart);
+      date.setDate(date.getDate() + index);
+      return date.getFullYear() + "-" + String(date.getMonth() + 1).padStart(2, "0") + "-" + String(date.getDate()).padStart(2, "0");
+    });
+    ghost.style.backgroundColor = this.getTaskBlockColor(task);
+    ghost.style.left = columnIndex * colWidth + "px";
+    ghost.style.width = colWidth + "px";
+    ghost.style.top = "0px";
+    ghost.style.height = "60px";
+    this.dragState = {
+      type: "move",
+      taskId: task.id,
+      startY: event.clientY,
+      startX: event.clientX,
+      origStartMin: 0,
+      origEndMin: 60,
+      dateStr: dateStrs[columnIndex],
+      hourHeight: 60,
+      ghost,
+      card,
+      moved: false,
+      colCount,
+      columnsRect,
+      dateStrs,
+      currentColIdx: columnIndex,
+      ghostBaseLeft: columnIndex * colWidth,
+      scrollContainer: grid,
+      scrollRAF: null,
+      source: "allday",
+      origScrollTop: grid.scrollTop || 0,
+      columnsEl,
+    };
+    card.addClass("dragging");
+  }
+
+  private openScheduleTask(taskId: string): void {
+    this.detailView.clearHistory();
+    this.plugin.settings.selectedTaskId = taskId;
+    void this.plugin.saveSettings();
+    this.detailView.open(taskId);
+    const layout = this.containerEl.querySelector(".todo-layout");
+    if (layout) layout.addClass("todo-layout-detail-open");
+  }
+
   private getContrastColor(hex: string): string {
     if (!hex || hex.length < 7) return "#ffffff";
     const r = parseInt(hex.substring(1, 3), 16);
@@ -3794,366 +2901,11 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   }
 
   private isAllDayTask(task: Task): boolean {
-    // An explicit My Day group is authoritative for schedule placement.
-    if (task.myDayGroup && task.myDayGroup !== "allday") return false;
-    if (task.myDayGroup === "allday" && task.startDate && task.dueDate) {
-      const start = new Date(task.startDate);
-      const due = new Date(task.dueDate);
-      if (!isNaN(start.getTime()) && !isNaN(due.getTime())) {
-        const allDayStart = start.getHours() === 7 && start.getMinutes() === 0;
-        const allDayDue = due.getHours() === 23 && (due.getMinutes() === 30 || due.getMinutes() === 59);
-        return allDayStart && allDayDue;
-      }
-    }
-    if (task.myDayGroup === "allday") return true;
-    // 无任何日期
-    if (!task.startDate && !task.dueDate) return true;
-    // 只有截止日期且没有具体时段时才视为全天任务。
-    if (task.dueDate && !task.startDate) {
-      const due = new Date(task.dueDate);
-      if (!isNaN(due.getTime()) && due.getHours() !== 23 && due.getMinutes() !== 59 && due.getMinutes() !== 30) return false;
-      return true;
-    }
-    // 有 dueDate，检查时间是否为全天标记
-    if (task.dueDate) {
-      const dueHasTime = task.dueDate.includes('T') && !task.dueDate.endsWith('T00:00:00') && !task.dueDate.endsWith('T23:30:00') && !task.dueDate.endsWith('T07:00:00');
-      if (!dueHasTime) return true;
-    }
-    return false;
+    return isAllDayTaskRule(task);
   }
 
   private isVisibleInSchedule(task: Task, view: "day" | "week" | "month"): boolean {
-    if (task.recurrence !== "daily") return true;
-    if (view === "day") return this.plugin.settings.showDailyRecurringInDaySchedule;
-    if (view === "week") return this.plugin.settings.showDailyRecurringInWeekSchedule;
-    return this.plugin.settings.showDailyRecurringInMonthSchedule;
-  }
-
-  private renderDayView(container: HTMLDivElement): void {
-    const HOUR_HEIGHT = 60;
-    const dateStr = this.scheduleYear + "-" + String(this.scheduleMonth + 1).padStart(2, "0") + "-" + String(this.scheduleDate).padStart(2, "0");
-    const allTasks = this.plugin.taskService.getAll();
-    const dayTasks = allTasks.filter(t => this.isVisibleInSchedule(t, "day") && t.dueDate && extractLocalDate(t.dueDate) === dateStr && !this.isAllDayTask(t));
-
-    const view = container.createDiv({ cls: "todo-schedule-day-view" });
-
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const today = new Date();
-    const todayStr = today.getFullYear() + "-" + pad(today.getMonth() + 1) + "-" + pad(today.getDate());
-    const alldayTasks = allTasks.filter(t => this.isVisibleInSchedule(t, "day") && (
-      (t.dueDate && extractLocalDate(t.dueDate) === dateStr && this.isAllDayTask(t))
-    ));
-    let gridEl: HTMLDivElement;
-    const allday = view.createDiv({ cls: "todo-day-allday" });
-    allday.createSpan({ cls: "todo-day-allday-label", text: isEnglish() ? "All day" : "全天" });
-    for (const t of alldayTasks) {
-      const card = allday.createDiv({ cls: "todo-day-allday-card" + (t.isCompleted ? " todo-schedule-completed" : "") });
-      card.style.backgroundColor = this.getTaskBlockColor(t);
-      card.style.color = this.getContrastColor(this.getTaskBlockColor(t));
-      card.createSpan({ text: t.title });
-      card.addEventListener("mousedown", (ev) => {
-        if (ev.button !== 0) return;
-        const sc = gridEl;
-        const scRect = sc.getBoundingClientRect();
-        const ghost = sc.createDiv({ cls: "todo-drag-ghost" });
-        const blockColor = this.getTaskBlockColor(t);
-        ghost.style.backgroundColor = blockColor;
-        ghost.style.left = "48px";
-        ghost.style.right = "4px";
-        ghost.style.width = "auto";
-        ghost.style.top = "0px";
-        ghost.style.height = "60px";
-        this.dragState = {
-          type: "move",
-          taskId: t.id,
-          startY: ev.clientY,
-          startX: ev.clientX,
-          origStartMin: 0,
-          origEndMin: 60,
-          dateStr,
-          hourHeight: 60,
-          ghost,
-          card,
-          moved: false,
-          colCount: 1,
-          columnsRect: null,
-          dateStrs: [dateStr],
-          currentColIdx: 0,
-          ghostBaseLeft: 0,
-          scrollContainer: sc,
-          scrollRAF: null,
-          source: "allday",
-          origScrollTop: sc?.scrollTop || 0,
-          columnsEl: null,
-        };
-        card.addClass("dragging");
-      });
-      card.addEventListener("click", () => {
-        if (this.dragState || this._lastDragMoved) return;
-        this.detailView.clearHistory();
-        this.plugin.settings.selectedTaskId = t.id;
-        void this.plugin.saveSettings();
-        this.detailView.open(t.id);
-        const layout = this.containerEl.querySelector(".todo-layout");
-        if (layout) layout.addClass("todo-layout-detail-open");
-      });
-    }
-
-    gridEl = view.createDiv({ cls: "todo-time-grid" });
-
-    const slots = gridEl.createDiv({ cls: "todo-time-slots" });
-    for (let h = 0; h < 24; h++) {
-      slots.createDiv({ cls: "todo-time-slot" });
-    }
-
-    const labels = gridEl.createDiv({ cls: "todo-time-labels" });
-    for (let h = 0; h <= 24; h++) {
-      labels.createDiv({ cls: "todo-time-label", text: String(h).padStart(2, "0") + ":00" });
-    }
-
-    const eventsContainer = gridEl.createDiv({ cls: "todo-time-events" });
-    const placements = this.layoutOverlapTasks(dayTasks);
-    for (const p of placements) {
-      const sd = new Date(p.task.startDate!);
-      const ed = new Date(p.task.dueDate!);
-      const startMin = sd.getHours() * 60 + sd.getMinutes();
-      const endMin = ed.getHours() * 60 + ed.getMinutes();
-      if (endMin < startMin) continue;
-
-      this.renderScheduleTaskCard(eventsContainer, p.task);
-      const card = eventsContainer.lastElementChild as HTMLElement;
-      const top = (startMin / 60) * HOUR_HEIGHT;
-      const height = Math.max(((endMin - startMin) / 60) * HOUR_HEIGHT, 20);
-      card.style.top = top + "px";
-      card.style.height = height + "px";
-      const widthPct = 100 / p.totalCols;
-      const leftPct = widthPct * p.col;
-      const gap = p.col * 3;
-      card.style.width = "calc(" + widthPct + "% - 3px)";
-      card.style.left = "calc(" + leftPct + "% + " + gap + "px)";
-    }
-
-    // T-703: Click-to-create on empty time slot
-    eventsContainer.addEventListener("click", async (ev) => {
-      if (this.dragState || this._lastDragMoved) return;
-      if (ev.target !== eventsContainer) return;
-      const rect = eventsContainer.getBoundingClientRect();
-      const y = ev.clientY - rect.top + gridEl.scrollTop;
-      const startMin = this.snapMinute(y, HOUR_HEIGHT);
-      const endMin = Math.min(1440, startMin + 60);
-      const title = await new PromptModal(this.app, "\u8f93\u5165\u4efb\u52a1\u6807\u9898").openAndGetValue();
-      if (!title) return;
-      const defaultList = this.plugin.listService.getDefault();
-      if (!defaultList) return;
-      await this.plugin.taskService.create({
-        title,
-        listId: defaultList.id,
-        startDate: this.minuteToIso(dateStr, startMin),
-        dueDate: this.minuteToIso(dateStr, endMin),
-      });
-      this.scheduleScrollTarget = "preserve";
-      this.renderScheduleView();
-    });
-
-    this.renderTimeLine(gridEl);
-
-    // Scroll strategy based on scheduleScrollTarget
-    if (this.scheduleScrollTarget === "now") {
-      gridEl.scrollTop = Math.max(0, ((new Date().getHours() - 1) * HOUR_HEIGHT));
-    } else if (this.scheduleScrollTarget !== "preserve") {
-      const taskEl = gridEl.querySelector(`[data-task-id="${this.scheduleScrollTarget.taskId}"]`) as HTMLElement;
-      if (taskEl) taskEl.scrollIntoView({ block: "center" });
-    }
-    this.scheduleScrollTarget = "preserve";
-  }
-
-  private renderWeekView(container: HTMLDivElement): void {
-    const HOUR_HEIGHT = 60;
-    const refDate = new Date(this.scheduleYear, this.scheduleMonth, this.scheduleDate);
-    const dow = refDate.getDay() || 7;
-    const weekStart = new Date(refDate);
-    weekStart.setDate(refDate.getDate() - dow + 1);
-    const dowNames = isEnglish() ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] : ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-    const today = new Date();
-
-    const view = container.createDiv({ cls: "todo-schedule-week-view" });
-    const grid = view.createDiv({ cls: "todo-schedule-week-grid" });
-
-    // Unified header: sticky thead with header + all-day rows
-    const thead = grid.createDiv({ cls: "todo-week-thead" });
-
-    // Header row
-    const headerRow = thead.createDiv({ cls: "todo-week-header" });
-    headerRow.createDiv({ cls: "todo-week-corner" });
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(weekStart);
-      d.setDate(d.getDate() + i);
-      const isToday = d.getFullYear() === today.getFullYear() && d.getMonth() === today.getMonth() && d.getDate() === today.getDate();
-      const col = headerRow.createDiv({ cls: "todo-week-day-header" + (isToday ? " todo-week-today-col" : "") });
-      col.createDiv({ cls: "todo-week-dow", text: dowNames[i] });
-      const dateNum = col.createDiv({ cls: "todo-week-date-num", text: String(d.getDate()) });
-      if (isToday) { dateNum.addClass("todo-schedule-today"); }
-      if (!isEnglish() && this.plugin.settings.showLunarCalendar) {
-        const lunarText = getLunarDisplayText(d.getFullYear(), d.getMonth() + 1, d.getDate());
-        const lunarCls = "todo-week-lunar" + (isLunarSpecialDay(d.getFullYear(), d.getMonth() + 1, d.getDate()) ? " todo-lunar-festival" : "");
-        col.createSpan({ cls: lunarCls, text: lunarText });
-      }
-    }
-
-    // All-day row
-    const todayStr = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
-    const datedAllday = this.plugin.taskService.getAll().filter(t => this.isVisibleInSchedule(t, "week") && t.dueDate && this.isAllDayTask(t));
-    const alldayRow = thead.createDiv({ cls: "todo-week-allday" });
-    alldayRow.createDiv({ cls: "todo-week-allday-label", text: isEnglish() ? "All day" : "全天" });
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(weekStart);
-      d.setDate(d.getDate() + i);
-      const ds = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-      const cell = alldayRow.createDiv({ cls: "todo-week-allday-cell" + (ds === todayStr ? " todo-week-today-col" : "") });
-      const cellTasks = datedAllday.filter(t => extractLocalDate(t.dueDate!) === ds);
-      for (const t of cellTasks) {
-        const card = cell.createDiv({ cls: "todo-day-allday-card" + (t.isCompleted ? " todo-schedule-completed" : "") });
-        card.style.backgroundColor = this.getTaskBlockColor(t);
-        card.style.color = this.getContrastColor(this.getTaskBlockColor(t));
-        card.createSpan({ text: t.title });
-        card.addEventListener("mousedown", (ev) => {
-          if (ev.button !== 0) return;
-          const sc = grid;
-          const columnsEl = sc.querySelector(".todo-week-columns") as HTMLElement;
-          const ghostParent = columnsEl || sc;
-          const ghost = ghostParent.createDiv({ cls: "todo-drag-ghost" });
-          const blockColor = this.getTaskBlockColor(t);
-          ghost.style.backgroundColor = blockColor;
-          const colCount = 7;
-          const columnsRect = columnsEl ? columnsEl.getBoundingClientRect() : null;
-          const colWidth = columnsRect ? columnsRect.width / colCount : 0;
-          const dateStrs: string[] = [];
-          for (let ci = 0; ci < 7; ci++) {
-            const cd = new Date(weekStart); cd.setDate(weekStart.getDate() + ci);
-            dateStrs.push(cd.getFullYear() + "-" + String(cd.getMonth() + 1).padStart(2, "0") + "-" + String(cd.getDate()).padStart(2, "0"));
-          }
-          const currentColIdx = i;
-          const ghostBaseLeft = currentColIdx * colWidth;
-          ghost.style.left = ghostBaseLeft + "px";
-          ghost.style.width = colWidth + "px";
-          ghost.style.top = "0px";
-          ghost.style.height = "60px";
-          this.dragState = {
-            type: "move",
-            taskId: t.id,
-            startY: ev.clientY,
-            startX: ev.clientX,
-            origStartMin: 0,
-            origEndMin: 60,
-            dateStr: ds,
-            hourHeight: 60,
-            ghost,
-            card,
-            moved: false,
-            colCount,
-            columnsRect,
-            dateStrs,
-            currentColIdx,
-            ghostBaseLeft,
-            scrollContainer: sc,
-            scrollRAF: null,
-            source: "allday" as const,
-            origScrollTop: sc?.scrollTop || 0,
-            columnsEl: columnsEl || null,
-          };
-          card.addClass("dragging");
-        });
-        card.addEventListener("click", () => {
-          if (this.dragState || this._lastDragMoved) return;
-          this.detailView.clearHistory();
-          this.plugin.settings.selectedTaskId = t.id;
-          void this.plugin.saveSettings();
-          this.detailView.open(t.id);
-          const layout = this.containerEl.querySelector(".todo-layout");
-          if (layout) layout.addClass("todo-layout-detail-open");
-        });
-      }
-    }
-
-    // Scrollable body with time grid and task columns
-    const tbody = grid.createDiv({ cls: "todo-week-tbody" });
-    const todayCol = today.getDay() === 0 ? 6 : today.getDay() - 1; // Mon=0..Sun=6
-
-    // Time slot rows (24 hours, each is a grid row)
-    for (let h = 0; h < 24; h++) {
-      const row = tbody.createDiv({ cls: "todo-week-grid-row" });
-      row.createDiv({ cls: "todo-week-time-cell" });
-      for (let d = 0; d < 7; d++) { row.createDiv({ cls: "todo-week-day-cell" + (d === todayCol ? " todo-week-today-col" : "") }); }
-    }
-
-    // Time labels
-    const labels = tbody.createDiv({ cls: "todo-time-labels" });
-    for (let h = 0; h <= 24; h++) { labels.createDiv({ cls: "todo-time-label", text: String(h).padStart(2, "0") + ":00" }); }
-
-    // Task columns (positioned over time slots)
-    const columns = tbody.createDiv({ cls: "todo-week-columns" });
-    const allTasks = this.plugin.taskService.getAll();
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(weekStart);
-      d.setDate(d.getDate() + i);
-      const ds = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
-      const col = columns.createDiv({ cls: "todo-week-column" });
-      const dayTasks = allTasks.filter(t => this.isVisibleInSchedule(t, "week") && t.startDate && t.dueDate && extractLocalDate(t.dueDate) === ds && !this.isAllDayTask(t));
-      const placements = this.layoutOverlapTasks(dayTasks);
-      for (const p of placements) {
-        const sd = new Date(p.task.startDate!);
-        const ed = new Date(p.task.dueDate!);
-        const startMin = sd.getHours() * 60 + sd.getMinutes();
-        const endMin = ed.getHours() * 60 + ed.getMinutes();
-        if (endMin < startMin) continue;
-        this.renderScheduleTaskCard(col, p.task);
-        const card = col.lastElementChild as HTMLElement;
-        card.dataset.dateStr = ds;
-        const top = (startMin / 60) * HOUR_HEIGHT;
-        const height = Math.max(((endMin - startMin) / 60) * HOUR_HEIGHT, 18);
-        card.style.top = top + "px";
-        card.style.height = height + "px";
-        const widthPct = 100 / p.totalCols;
-        const leftPct = widthPct * p.col;
-        const gap = p.col * 3;
-        card.style.width = "calc(" + widthPct + "% - 3px)";
-        card.style.left = "calc(" + leftPct + "% + " + gap + "px)";
-      }
-
-      // T-703: Click-to-create on empty week column
-      col.addEventListener("click", async (ev) => {
-        if (this.dragState || this._lastDragMoved) return;
-        if (ev.target !== col) return;
-        const rect = col.getBoundingClientRect();
-        const y = ev.clientY - rect.top;
-        const startMin = this.snapMinute(y, HOUR_HEIGHT);
-        const endMin = Math.min(1440, startMin + 60);
-        const title = await new PromptModal(this.app, "\u8f93\u5165\u4efb\u52a1\u6807\u9898").openAndGetValue();
-        if (!title) return;
-        const defaultList = this.plugin.listService.getDefault();
-        if (!defaultList) return;
-        await this.plugin.taskService.create({
-          title,
-          listId: defaultList.id,
-          startDate: this.minuteToIso(ds, startMin),
-          dueDate: this.minuteToIso(ds, endMin),
-        });
-        this.scheduleScrollTarget = "preserve";
-        this.renderScheduleView();
-      });
-    }
-
-    // Timeline in thead (stays visible when scrolling)
-    this.renderTimeLine(tbody);
-
-    // Scroll strategy based on scheduleScrollTarget
-    if (this.scheduleScrollTarget === "now") {
-      grid.scrollTop = Math.max(0, ((today.getHours() - 1) * HOUR_HEIGHT));
-    } else if (this.scheduleScrollTarget !== "preserve") {
-      const taskEl = grid.querySelector(`[data-task-id="${this.scheduleScrollTarget.taskId}"]`) as HTMLElement;
-      if (taskEl) taskEl.scrollIntoView({ block: "center" });
-    }
-    this.scheduleScrollTarget = "preserve";
+    return isVisibleInScheduleRule(task, view, this.plugin.settings);
   }
 
   private renderTimeLine(container: HTMLElement): void {
@@ -4185,194 +2937,6 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   }
 
   // T-703: Handle drag move
-  // T-703: Handle drag move
-  private handleDragMove(ev: MouseEvent): void {
-    const ds = this.dragState;
-    if (!ds) return;
-    const rawDeltaY = ev.clientY - ds.startY;
-    const deltaX = ev.clientX - ds.startX;
-    if (!ds.moved && Math.abs(rawDeltaY) < 3 && Math.abs(deltaX) < 3) return;
-    ds.moved = true;
-    const scrollChange = ds.scrollContainer ? (ds.scrollContainer.scrollTop - ds.origScrollTop) : 0;
-    const deltaY = rawDeltaY + scrollChange;
-    const deltaMin = Math.round((deltaY / ds.hourHeight) * 60 / 15) * 15;
-    if (ds.type === "move") {
-      const newStart = Math.max(0, Math.min(1425, ds.origStartMin + deltaMin));
-      const duration = ds.origEndMin - ds.origStartMin;
-      const newEnd = Math.min(1440, newStart + duration);
-      ds.ghost.style.top = ((newStart / 60) * ds.hourHeight) + "px";
-      ds.ghost.style.height = Math.max(15, ((newEnd - newStart) / 60) * ds.hourHeight) + "px";
-    } else {
-      const newEnd = Math.max(ds.origStartMin + 15, Math.min(1440, ds.origEndMin + deltaMin));
-      ds.ghost.style.height = Math.max(15, ((newEnd - ds.origStartMin) / 60) * ds.hourHeight) + "px";
-    }
-    // Allday drag: position ghost relative to columns container
-    if (ds.source === "allday" && ds.columnsEl) {
-      const colRect = ds.columnsEl.getBoundingClientRect();
-      const snappedMin = this.snapMinute(ev.clientY - colRect.top, ds.hourHeight);
-      ds.ghost.style.top = Math.max(0, (snappedMin / 60) * ds.hourHeight) + "px";
-      ds.ghost.style.height = ds.hourHeight + "px";
-    }
-    // Cross-day horizontal ghost movement in week view
-    if (ds.colCount > 1 && ds.columnsRect) {
-      const colWidth = ds.columnsRect.width / ds.colCount;
-      const targetCol = Math.max(0, Math.min(ds.colCount - 1, Math.floor((ev.clientX - ds.columnsRect.left) / colWidth)));
-      ds.ghost.style.left = (ds.ghostBaseLeft + (targetCol - ds.currentColIdx) * colWidth) + "px";
-    }
-    // Auto-scroll when near edges of scroll container
-    if (ds.scrollContainer) {
-      const scRect = ds.scrollContainer.getBoundingClientRect();
-      const threshold = 50;
-      const maxSpeed = 15;
-      const nearTop = ev.clientY - scRect.top;
-      const nearBottom = scRect.bottom - ev.clientY;
-      let scrollDelta = 0;
-      if (nearTop >= 0 && nearTop < threshold) {
-        scrollDelta = -Math.round(maxSpeed * (1 - nearTop / threshold));
-      } else if (nearBottom >= 0 && nearBottom < threshold) {
-        scrollDelta = Math.round(maxSpeed * (1 - nearBottom / threshold));
-      }
-      if (scrollDelta !== 0) {
-        if (!ds.scrollRAF) {
-          const tick = () => {
-            if (!this.dragState || !this.dragState.scrollContainer) return;
-            this.dragState.scrollContainer.scrollTop += scrollDelta;
-            ds.scrollRAF = requestAnimationFrame(tick);
-          };
-          ds.scrollRAF = requestAnimationFrame(tick);
-        }
-      } else if (ds.scrollRAF) {
-        cancelAnimationFrame(ds.scrollRAF);
-        ds.scrollRAF = null;
-      }
-    }
-  }
-
-  // T-703: Handle drag end
-  private async handleDragEnd(ev: MouseEvent): Promise<void> {
-    const ds = this.dragState;
-    if (!ds) return;
-    this.dragState = null;
-    if (ds.scrollRAF) { cancelAnimationFrame(ds.scrollRAF); ds.scrollRAF = null; }
-    ds.card.removeClass("dragging");
-    ds.ghost.remove();
-    this._lastDragMoved = true;
-    setTimeout(() => { this._lastDragMoved = false; }, 0);
-    if (!ds.moved) {
-      // Treat as click: open detail panel
-      this.detailView.clearHistory();
-      this.plugin.settings.selectedTaskId = ds.taskId;
-      void this.plugin.saveSettings();
-      this.detailView.open(ds.taskId);
-      const layout = this.containerEl.querySelector(".todo-layout");
-      if (layout) layout.addClass("todo-layout-detail-open");
-      return;
-    }
-    let newStart: number, newEnd: number;
-    let finalDateStr = ds.dateStr;
-    if (ds.source === "allday" && ds.columnsEl) {
-      // Allday drag: calculate time from mouse position relative to columns container
-      const colRect = ds.columnsEl.getBoundingClientRect();
-      newStart = this.snapMinute(ev.clientY - colRect.top, ds.hourHeight);
-      newStart = Math.max(0, Math.min(1425, newStart));
-      newEnd = Math.min(1440, newStart + 60);
-      // Determine target date (cross-day support for week view)
-      if (ds.colCount > 1 && ds.columnsRect) {
-        const colWidth = ds.columnsRect.width / ds.colCount;
-        const targetCol = Math.max(0, Math.min(ds.colCount - 1, Math.floor((ev.clientX - ds.columnsRect.left) / colWidth)));
-        if (targetCol >= 0 && targetCol < ds.dateStrs.length) {
-          finalDateStr = ds.dateStrs[targetCol];
-        }
-      }
-    } else {
-      // Timeline drag: calculate time from delta
-      const scrollChange = ds.scrollContainer ? (ds.scrollContainer.scrollTop - ds.origScrollTop) : 0;
-      const deltaY = ev.clientY - ds.startY + scrollChange;
-      const deltaMin = Math.round((deltaY / ds.hourHeight) * 60 / 15) * 15;
-      if (ds.type === "move") {
-        newStart = Math.max(0, Math.min(1425, ds.origStartMin + deltaMin));
-        const duration = ds.origEndMin - ds.origStartMin;
-        newEnd = Math.min(1440, newStart + duration);
-      } else {
-        newStart = ds.origStartMin;
-        newEnd = Math.max(ds.origStartMin + 15, Math.min(1440, ds.origEndMin + deltaMin));
-      }
-      // Determine target date (cross-day support)
-      if (ds.colCount > 1 && ds.columnsRect) {
-        const colWidth = ds.columnsRect.width / ds.colCount;
-        const targetCol = Math.max(0, Math.min(ds.colCount - 1, Math.floor((ev.clientX - ds.columnsRect.left) / colWidth)));
-        if (targetCol >= 0 && targetCol < ds.dateStrs.length) {
-          finalDateStr = ds.dateStrs[targetCol];
-        }
-      }
-    }
-    // Skip update if allday task dropped outside grid
-    // Skip update if allday task dropped outside columns container
-    if (ds.source === "allday" && ds.columnsEl) {
-      const colRect = ds.columnsEl.getBoundingClientRect();
-      if (ev.clientY < colRect.top || ev.clientY > colRect.bottom) {
-        this.scheduleScrollTarget = "preserve";
-        this.renderScheduleView();
-        return;
-      }
-    }
-    await this.plugin.taskService.update(ds.taskId, {
-      startDate: this.minuteToIso(finalDateStr, newStart),
-      dueDate: this.minuteToIso(finalDateStr, newEnd),
-    });
-    this.refreshDetailIfActive(ds.taskId);
-      this.scheduleScrollTarget = { taskId: ds.taskId };
-    this.renderScheduleView();
-  }
-
-
-  private setupPlanAddButton(btn: HTMLElement, bodyEl: HTMLElement, kind: PlanKind, periodKey: string): void {
-    btn.addEventListener("click", (ev) => {
-      ev.stopPropagation();
-      if (this.isMobile()) {
-        void this.promptPlanCreate(kind, periodKey);
-        return;
-      }
-      if (bodyEl.style.display === "none") {
-        bodyEl.style.display = "";
-        const arrow = bodyEl.parentElement?.querySelector(".todo-plan-group-arrow");
-        if (arrow) arrow.removeClass("collapsed");
-      }
-      if (bodyEl.querySelector(".todo-plan-inline-input")) return;
-      const row = document.createElement("div");
-      row.className = "todo-plan-inline-input";
-      const tasks = bodyEl.querySelectorAll(".todo-plan-group-body > .todo-task-item");
-      const lastTask = tasks.length > 0 ? tasks[tasks.length - 1] : null;
-      if (lastTask) {
-        lastTask.after(row);
-      } else {
-        bodyEl.prepend(row);
-      }
-      const input = row.createEl("input", { attr: { placeholder: "\u8f93\u5165\u4efb\u52a1\u6807\u9898..." } });
-      window.setTimeout(() => input.focus(), 30);
-      let saved = false;
-      const save = async () => {
-        if (saved) return;
-        saved = true;
-        const title = input.value.trim();
-        if (title) {
-          await this.plugin.taskService.create({ title, planKind: kind, planPeriodKey: periodKey });
-          if (this.activePlanKind === 'year' || this.activePlanKind === 'month') {
-            await this.renderGoalDashboard(this.activePlanKind);
-          } else {
-            await this.renderPlanView(this.activePlanKind!);
-          }
-        } else {
-          row.remove();
-        }
-      };
-      input.addEventListener("keydown", async (ev) => {
-        if (ev.key === "Enter") { ev.preventDefault(); await save(); }
-        if (ev.key === "Escape") { ev.preventDefault(); saved = true; row.remove(); }
-      });
-      input.addEventListener("blur", () => { void save(); });
-    });
-  }
 
   private async promptPlanCreate(kind: PlanKind, periodKey: string, parentId?: string, tags?: string[]): Promise<void> {
     const title = await new PromptModal(this.app, "输入任务标题").openAndGetValue();
@@ -4741,46 +3305,6 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     }
   }
 
-  private getGoalPeriodMoveOptions(goal: Task): string[] {
-    if (goal.planKind === "month") {
-      const parent = this.plugin.taskService.getParentOf(goal.id);
-      const quarterKey = parent?.planKind === "quarter" && parent.planPeriodKey
-        ? parent.planPeriodKey
-        : getParentPeriodKey("month", goal.planPeriodKey ?? "");
-      if (!quarterKey) return [];
-      const [yearPart, quarterPart] = quarterKey.split("-Q");
-      const year = Number(yearPart);
-      const quarter = Number(quarterPart);
-      if (!Number.isInteger(year) || !Number.isInteger(quarter) || quarter < 1 || quarter > 4) return [];
-      return [0, 1, 2].map((offset) => {
-        const month = (quarter - 1) * 3 + offset + 1;
-        return `${year}-${String(month).padStart(2, "0")}`;
-      });
-    }
-    if (goal.planKind === "week") return this.getPlanMoveOptions(goal);
-    return [];
-  }
-
-  private async moveGoalToPeriod(goal: Task, targetKey: string, dashboardKind: "year" | "month"): Promise<void> {
-    if (goal.planKind !== "month" && goal.planKind !== "week") return;
-    await this.plugin.taskService.update(goal.id, { planPeriodKey: targetKey });
-    await this.renderLists();
-    await this.renderGoalDashboard(dashboardKind);
-  }
-
-  private showGoalPeriodMoveMenu(goal: Task, dashboardKind: "year" | "month"): void {
-    const submenu = new Menu();
-    for (const key of this.getGoalPeriodMoveOptions(goal)) {
-      const kind = goal.planKind as "month" | "week";
-      submenu.addItem((item) => item
-        .setTitle(kind === "month" ? this.localizedPeriodLabel("month", key) : this.localizedSubGroupLabel("week", key))
-        .setIcon(kind === "month" ? "calendar-days" : "calendar-range")
-        .setChecked(goal.planPeriodKey === key)
-        .onClick(() => { void this.moveGoalToPeriod(goal, key, dashboardKind); }));
-    }
-    submenu.showAtPosition({ x: Math.round(window.innerWidth / 2), y: Math.round(window.innerHeight / 2) });
-  }
-
   private showMovePlanMenu(task: Task, currentView: ViewNav | "list" | "trash" | "schedule" | "review"): void {
     const submenu = new Menu();
     submenu.addItem((item) => item
@@ -5094,47 +3618,15 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   }
 
   private getReviewTitle(): string {
-    const dayNames = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
-    if (this.reviewMode === "day") {
-      const d = new Date(this.reviewYear, this.reviewMonth, this.reviewDate);
-      if (isEnglish()) {
-        return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", year: "numeric", weekday: "long" }).format(d);
-      }
-      return (this.reviewMonth + 1) + "月" + this.reviewDate + "日 " + dayNames[d.getDay()];
-    }
-    if (this.reviewMode === "week") {
-      const d = new Date(this.reviewYear, this.reviewMonth, this.reviewDate);
-      const wn = getISOWeekNumber(d);
-      const weekYear = d.getFullYear();
-      const range = getISOWeekRange(weekYear, wn);
-      const sm = range.start.getMonth() + 1;
-      const sd = range.start.getDate();
-      const em = range.end.getMonth() + 1;
-      const ed = range.end.getDate();
-      if (isEnglish()) {
-        return `${weekYear} Week ${wn} (${sm}/${sd} - ${em}/${ed})`;
-      }
-      return weekYear + "年第" + wn + "周 (" + sm + "." + sd + " - " + em + "." + ed + ")";
-    }
-    if (this.reviewMode === "month") {
-      if (isEnglish()) {
-        return new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric" }).format(new Date(this.reviewYear, this.reviewMonth, 1));
-      }
-      return this.reviewYear + "年 " + (this.reviewMonth + 1) + "月";
-    }
-    if (isEnglish()) return String(this.reviewYear);
-    return this.reviewYear + "年";
-  }
-
-  private normalizeReviewDate(): void {
-    const d = new Date(this.reviewYear, this.reviewMonth, this.reviewDate);
-    this.reviewYear = d.getFullYear();
-    this.reviewMonth = d.getMonth();
-    this.reviewDate = d.getDate();
+    return formatReviewTitle(this.reviewState(), this.reviewMode, isEnglish());
   }
 
   private reviewDateToStr(): string {
-    return this.reviewYear + "-" + String(this.reviewMonth + 1).padStart(2, "0") + "-" + String(this.reviewDate).padStart(2, "0");
+    return reviewDateToString(this.reviewState());
+  }
+
+  private reviewState(): ReviewDateState {
+    return { year: this.reviewYear, month: this.reviewMonth, date: this.reviewDate };
   }
 
   private renderReviewView(): void {
@@ -5156,17 +3648,17 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     };
 
     prevBtn.addEventListener("click", () => {
-      if (this.reviewMode === "day") { this.reviewDate--; this.normalizeReviewDate(); }
-      else if (this.reviewMode === "week") { this.reviewDate -= 7; this.normalizeReviewDate(); }
-      else if (this.reviewMode === "month") { this.reviewMonth--; if (this.reviewMonth < 0) { this.reviewMonth = 11; this.reviewYear--; } }
-      else { this.reviewYear--; }
+      const shifted = shiftReviewDate(this.reviewState(), this.reviewMode, -1);
+      this.reviewYear = shifted.year;
+      this.reviewMonth = shifted.month;
+      this.reviewDate = shifted.date;
       updateView();
     });
     nextBtn.addEventListener("click", () => {
-      if (this.reviewMode === "day") { this.reviewDate++; this.normalizeReviewDate(); }
-      else if (this.reviewMode === "week") { this.reviewDate += 7; this.normalizeReviewDate(); }
-      else if (this.reviewMode === "month") { this.reviewMonth++; if (this.reviewMonth > 11) { this.reviewMonth = 0; this.reviewYear++; } }
-      else { this.reviewYear++; }
+      const shifted = shiftReviewDate(this.reviewState(), this.reviewMode, 1);
+      this.reviewYear = shifted.year;
+      this.reviewMonth = shifted.month;
+      this.reviewDate = shifted.date;
       updateView();
     });
     todayBtn.addEventListener("click", () => {
@@ -5201,245 +3693,8 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   }
 
   private renderReviewContent(container: HTMLDivElement): void {
-    container.empty();
-    const stickyHeader = this.taskListEl.querySelector<HTMLElement>(".todo-review-sticky-header");
-    stickyHeader?.querySelectorAll<HTMLElement>(".todo-review-stats-row").forEach((el) => el.remove());
-    const modeLabels: Record<string, string> = { day: "日", week: "周", month: "月", year: "年" };
-    switch (this.reviewMode) {
-      case "day":
-        this.renderDayReview(container);
-        break;
-      case "week":
-        this.renderWeekReview(container);
-        break;
-      case "month":
-        this.renderMonthReview(container);
-        break;
-      case "year":
-        this.renderYearReview(container);
-        break;
-    }
-    const statsRow = container.querySelector<HTMLElement>(".todo-review-stats-row");
-    if (statsRow && stickyHeader) stickyHeader.appendChild(statsRow);
+    this.reviewRenderer.render(container, this.reviewMode, this.reviewState());
   }
 
 
-  private renderQuadrantDist(container: HTMLElement, tasks: Task[]): void {
-    const quadrantColors: Record<string, string> = {
-      "重要紧急": "#BC6F67", "重要不紧急": "#6D91B6",
-      "不重要紧急": "#C19957", "不重要不紧急": "#9AA1A1",
-    };
-    const allTags = this.plugin.tagService.getAll();
-    const quadrantTags = allTags.filter(t => t.sortOrder < 4);
-    const qGroups = new Map<string, { total: number; completed: number; color: string }>();
-    for (const tag of quadrantTags) { qGroups.set(tag.name, { total: 0, completed: 0, color: quadrantColors[tag.name] || "#71747A" }); }
-    qGroups.set("未分类", { total: 0, completed: 0, color: "#71747A" });
-    for (const task of tasks) {
-      const qTag = task.tags.find(tid => { const tag = this.plugin.tagService.getById(tid); return tag && tag.sortOrder < 4; });
-      const qName = qTag ? (this.plugin.tagService.getById(qTag)?.name ?? "未分类") : "未分类";
-      const g = qGroups.get(qName)!;
-      g.total++;
-      if (task.isCompleted) g.completed++;
-    }
-    const qDataFixed = Array.from(qGroups.entries()).map(([name, v]) => ({ label: name === "未分类" ? (isEnglish() ? "Uncategorized" : name) : systemTagName(allTags.find(t => t.name === name) || { name, isDefault: false }), total: v.total, completed: v.completed, color: v.color }));
-    const qSection = container.createDiv({ cls: "todo-review-section" });
-    qSection.createDiv({ cls: "todo-review-section-title", text: t("四象限分布") });
-    renderDistributionBar(qSection, qDataFixed);
-  }
-
-  private renderDomainDist(container: HTMLElement, tasks: Task[]): void {
-    const allTags = this.plugin.tagService.getAll();
-    const domainTags = allTags.filter(t => t.sortOrder >= 4);
-    const dGroups = new Map<string, { total: number; completed: number; color: string }>();
-    for (const tag of domainTags) { dGroups.set(tag.name, { total: 0, completed: 0, color: tag.color }); }
-    dGroups.set("未分类", { total: 0, completed: 0, color: "#71747A" });
-    for (const task of tasks) {
-      const dTag = task.tags.find(tid => { const tag = this.plugin.tagService.getById(tid); return tag && tag.sortOrder >= 4; });
-      const dName = dTag ? (this.plugin.tagService.getById(dTag)?.name ?? "未分类") : "未分类";
-      const g = dGroups.get(dName)!;
-      g.total++;
-      if (task.isCompleted) g.completed++;
-    }
-    const dDataFixed = Array.from(dGroups.entries()).map(([name, v]) => ({ label: name === "未分类" ? (isEnglish() ? "Uncategorized" : name) : systemTagName(allTags.find(t => t.name === name) || { name, isDefault: false }), total: v.total, completed: v.completed, color: v.color }));
-    const dSection = container.createDiv({ cls: "todo-review-section" });
-    dSection.createDiv({ cls: "todo-review-section-title", text: t("领域分布") });
-    renderDistributionBar(dSection, dDataFixed);
-  }
-
-  private renderDayReview(container: HTMLDivElement): void {
-    const dateStr = this.reviewDateToStr();
-    const stats = this.plugin.statsService.getDayStats(dateStr);
-
-    const summary = this.plugin.statsService.getStatusSummary(dateStr, dateStr);
-    const statsRow = container.createDiv({ cls: "todo-review-stats-row" });
-    renderStatCard(statsRow, t("今日任务"), String(summary.total), "calendar-check", "#6D91B6", () => this.navigateWithFilter({ type: "date", value: dateStr, label: dateStr + " " + t("今日任务"), dateField: "dueDate" }));
-    renderStatCard(statsRow, t("今日完成"), String(summary.completed), "check-circle-2", "#41B974", () => this.navigateWithFilter({ type: "date", value: dateStr, label: dateStr + " " + t("完成"), dateField: "completedAt" }));
-    renderStatCard(statsRow, t("进行中"), String(summary.active), "timer", "#6D91B6");
-    renderStatCard(statsRow, t("已搁置"), String(summary.shelved), "pause-circle", "#C19957");
-    renderStatCard(statsRow, t("已放弃"), String(summary.abandoned), "x-circle", "#9AA1A1");
-    renderStatCard(statsRow, t("完成率"), summary.completionRate + "%", "bar-chart-2", "#91719E");
-    const yesterday = new Date(this.reviewYear, this.reviewMonth, this.reviewDate - 1);
-    const yesterdayStr = yesterday.getFullYear() + "-" + String(yesterday.getMonth() + 1).padStart(2, "0") + "-" + String(yesterday.getDate()).padStart(2, "0");
-    const yesterdayOverdue = this.plugin.statsService.getStatusSummary(yesterdayStr, yesterdayStr).overdue;
-    renderStatCard(statsRow, t("昨日逾期"), String(yesterdayOverdue), "alert-triangle", "#BC6F67", () => this.navigateWithFilter({ type: "date", value: yesterdayStr, label: yesterdayStr + " " + t("逾期任务"), dateField: "dueDate" }));
-
-    // 今日任务按象限分组
-    const todayTasks = this.plugin.taskService.getAll().filter(t => t.dueDate && extractLocalDate(t.dueDate) === dateStr);
-    this.renderQuadrantDist(container, todayTasks);
-
-    this.renderDomainDist(container, todayTasks);
-  }
-
-  private renderWeekReview(container: HTMLDivElement): void {
-    const d = new Date(this.reviewYear, this.reviewMonth, this.reviewDate);
-    const weekYear = d.getFullYear();
-    const wn = getISOWeekNumber(d);
-    const range = getISOWeekRange(weekYear, wn);
-    const startStr = range.start.getFullYear() + "-" + String(range.start.getMonth() + 1).padStart(2, "0") + "-" + String(range.start.getDate()).padStart(2, "0");
-    const endStr = range.end.getFullYear() + "-" + String(range.end.getMonth() + 1).padStart(2, "0") + "-" + String(range.end.getDate()).padStart(2, "0");
-
-    const stats = this.plugin.statsService.getWeekStats(weekYear, wn);
-
-    // 概览卡片
-    const summary = this.plugin.statsService.getStatusSummary(startStr, endStr);
-    const statsRow = container.createDiv({ cls: "todo-review-stats-row" });
-    renderStatCard(statsRow, t("本周任务"), String(summary.total), "calendar-check", "#6D91B6", () => this.navigateWithFilter({ type: "date", value: startStr, label: t("本周任务"), dateField: "dueDate" }));
-    renderStatCard(statsRow, t("本周完成"), String(summary.completed), "check-circle-2", "#41B974", () => this.navigateWithFilter({ type: "date", value: startStr, label: t("本周完成"), dateField: "completedAt" }));
-    renderStatCard(statsRow, t("进行中"), String(summary.active), "timer", "#6D91B6");
-    renderStatCard(statsRow, t("已搁置"), String(summary.shelved), "pause-circle", "#C19957");
-    renderStatCard(statsRow, t("已放弃"), String(summary.abandoned), "x-circle", "#9AA1A1");
-    renderStatCard(statsRow, t("完成率"), summary.completionRate + "%", "bar-chart-2", "#91719E");
-    renderStatCard(statsRow, t("逾期任务"), String(summary.overdue), "alert-triangle", "#BC6F67", () => this.navigateWithFilter({ type: "overdue", value: "", label: t("逾期任务") }));
-
-    // 每日完成趋势堆叠柱状图
-    const dayLabels = isEnglish() ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] : ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
-    const stackedData = stats.dailyTrend.map((item: { date: string; count: number; rate: number; uncompleted: number }, i: number) => ({
-      label: dayLabels[i] || item.date,
-      segments: [
-        { value: item.uncompleted, color: "#C8C8C8", label: t("未完成") },
-        { value: item.count, color: "#41B974", label: t("完成") },
-      ],
-    }));
-    const trendSection = container.createDiv({ cls: "todo-review-section" });
-    trendSection.createDiv({ cls: "todo-review-section-title", text: t("每日任务趋势") });
-    renderStackedBarChart(trendSection, stackedData);
-
-    const allTasks = this.plugin.taskService.getAll();
-    const weekTasks = allTasks.filter(t => t.dueDate && extractLocalDate(t.dueDate) >= startStr && extractLocalDate(t.dueDate) <= endStr);
-    this.renderQuadrantDist(container, weekTasks);
-
-    this.renderDomainDist(container, weekTasks);
-  }
-  private renderMonthReview(container: HTMLDivElement): void {
-    const year = this.reviewYear;
-    const month = this.reviewMonth;
-    const stats = this.plugin.statsService.getMonthStats(year, month);
-
-    // 本月日期范围
-    const startStr = year + "-" + String(month + 1).padStart(2, "0") + "-01";
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const endStr = year + "-" + String(month + 1).padStart(2, "0") + "-" + String(daysInMonth).padStart(2, "0");
-
-    // 概览卡片
-    const allTasks = this.plugin.taskService.getAll();
-    const summary = this.plugin.statsService.getStatusSummary(startStr, endStr);
-    const statsRow = container.createDiv({ cls: "todo-review-stats-row" });
-    renderStatCard(statsRow, t("本月任务"), String(summary.total), "calendar-check", "#6D91B6", () => this.navigateWithFilter({ type: "date", value: startStr, label: t("本月任务"), dateField: "dueDate" }));
-    renderStatCard(statsRow, t("本月完成"), String(summary.completed), "check-circle-2", "#41B974", () => this.navigateWithFilter({ type: "date", value: startStr, label: t("本月完成"), dateField: "completedAt" }));
-    renderStatCard(statsRow, t("进行中"), String(summary.active), "timer", "#6D91B6");
-    renderStatCard(statsRow, t("已搁置"), String(summary.shelved), "pause-circle", "#C19957");
-    renderStatCard(statsRow, t("已放弃"), String(summary.abandoned), "x-circle", "#9AA1A1");
-    renderStatCard(statsRow, t("完成率"), summary.completionRate + "%", "bar-chart-2", "#91719E");
-    renderStatCard(statsRow, t("逾期任务"), String(summary.overdue), "alert-triangle", "#BC6F67", () => this.navigateWithFilter({ type: "overdue", value: "", label: t("逾期任务") }));
-
-    // 月历热力图
-    const calSection = container.createDiv({ cls: "todo-review-section" });
-    calSection.createDiv({ cls: "todo-review-section-title", text: t("月度打卡") });
-    renderMonthCalendar(calSection, year, month, stats.dailyTrend.map((d: { date: string; count: number }) => ({ date: d.date, count: d.count })));
-
-    // 每周任务趋势堆叠柱状图
-    const weekCompletedMap = new Map<string, number>();
-    const weekUncompletedMap = new Map<string, number>();
-    for (const d of stats.dailyTrend) {
-      const dateObj = new Date(d.date + "T00:00:00");
-      const wy = getISOWeekNumber(dateObj);
-      const key = isEnglish() ? "Week " + wy : "第" + wy + "周";
-      weekCompletedMap.set(key, (weekCompletedMap.get(key) || 0) + d.count);
-      weekUncompletedMap.set(key, (weekUncompletedMap.get(key) || 0) + d.uncompleted);
-    }
-    const weekStackedData = Array.from(weekCompletedMap.keys()).sort().map(key => ({
-      label: key,
-      segments: [
-        { value: weekUncompletedMap.get(key) || 0, color: "#C8C8C8", label: t("未完成") },
-        { value: weekCompletedMap.get(key) || 0, color: "#41B974", label: t("完成") },
-      ],
-    }));
-    if (weekStackedData.length > 0) {
-      const weekSection = container.createDiv({ cls: "todo-review-section" });
-      weekSection.createDiv({ cls: "todo-review-section-title", text: t("每周任务趋势") });
-      renderStackedBarChart(weekSection, weekStackedData);
-    }
-
-    const monthTasks = allTasks.filter(t => t.dueDate && extractLocalDate(t.dueDate) >= startStr && extractLocalDate(t.dueDate) <= endStr);
-    this.renderQuadrantDist(container, monthTasks);
-
-    this.renderDomainDist(container, monthTasks);
-  }
-
-  private renderYearReview(container: HTMLDivElement): void {
-    const year = this.reviewYear;
-    const stats = this.plugin.statsService.getYearStats(year);
-
-    const startStr = year + "-01-01";
-    const endStr = year + "-12-31";
-
-    // 概览卡片
-    const allTasks = this.plugin.taskService.getAll();
-    const summary = this.plugin.statsService.getStatusSummary(startStr, endStr);
-    const statsRow = container.createDiv({ cls: "todo-review-stats-row" });
-    renderStatCard(statsRow, t("本年任务"), String(summary.total), "calendar-check", "#6D91B6", () => this.navigateWithFilter({ type: "date", value: startStr, label: t("本年任务"), dateField: "dueDate" }));
-    renderStatCard(statsRow, t("本年完成"), String(summary.completed), "check-circle-2", "#41B974", () => this.navigateWithFilter({ type: "date", value: startStr, label: t("本年完成"), dateField: "completedAt" }));
-    renderStatCard(statsRow, t("进行中"), String(summary.active), "timer", "#6D91B6");
-    renderStatCard(statsRow, t("已搁置"), String(summary.shelved), "pause-circle", "#C19957");
-    renderStatCard(statsRow, t("已放弃"), String(summary.abandoned), "x-circle", "#9AA1A1");
-    renderStatCard(statsRow, t("完成率"), summary.completionRate + "%", "bar-chart-2", "#91719E");
-    renderStatCard(statsRow, t("逾期任务"), String(summary.overdue), "alert-triangle", "#BC6F67", () => this.navigateWithFilter({ type: "overdue", value: "", label: t("逾期任务") }));
-
-    // GitHub 风格年热力图
-    const heatSection = container.createDiv({ cls: "todo-review-section" });
-    heatSection.createDiv({ cls: "todo-review-section-title", text: t("年度打卡") });
-    renderYearHeatmap(heatSection, year, stats.dailyTrend.map((d: { date: string; count: number }) => ({ date: d.date, count: d.count })));
-
-    // 每月任务趋势堆叠柱状图
-    const monthCompletedMap = new Map<string, number>();
-    const monthUncompletedMap = new Map<string, number>();
-    for (const d of stats.dailyTrend) {
-      const m = d.date.substring(5, 7);
-      const key = String(parseInt(m, 10));
-      monthCompletedMap.set(key, (monthCompletedMap.get(key) || 0) + d.count);
-      monthUncompletedMap.set(key, (monthUncompletedMap.get(key) || 0) + d.uncompleted);
-    }
-    const monthStackedData: { label: string; segments: { value: number; color: string; label: string }[] }[] = [];
-    for (let m = 1; m <= 12; m++) {
-      const key = String(m);
-      const label = isEnglish()
-        ? new Intl.DateTimeFormat("en-US", { month: "short" }).format(new Date(year, m - 1, 1))
-        : m + "月";
-      monthStackedData.push({
-        label,
-        segments: [
-          { value: monthUncompletedMap.get(key) || 0, color: "#C8C8C8", label: t("未完成") },
-          { value: monthCompletedMap.get(key) || 0, color: "#41B974", label: t("完成") },
-        ],
-      });
-    }
-    const monthSection = container.createDiv({ cls: "todo-review-section" });
-    monthSection.createDiv({ cls: "todo-review-section-title", text: t("每月任务趋势") });
-    renderStackedBarChart(monthSection, monthStackedData);
-
-    const yearTasks = allTasks.filter(t => t.dueDate && extractLocalDate(t.dueDate) >= startStr && extractLocalDate(t.dueDate) <= endStr);
-    this.renderQuadrantDist(container, yearTasks);
-
-    this.renderDomainDist(container, yearTasks);
-  }
 }

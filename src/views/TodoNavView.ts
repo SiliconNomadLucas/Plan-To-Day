@@ -3,6 +3,7 @@ import type ObsidianTodoPlugin from "../../main";
 import type { ViewNav } from "./TodoView";
 import type { PlanKind } from "../models/Task";
 import { localizeDom, t } from "../i18n";
+import { openPluginSettings } from "../utils/obsidian-settings";
 
 export const VIEW_TYPE_TODO_NAV = "obsidian-todo-nav";
 
@@ -29,10 +30,7 @@ export class TodoNavView extends ItemView {
   private collapseSidebar(): void {
     // On mobile, collapse the left sidebar after nav action
     if (window.innerWidth <= 600) {
-      const ws = this.app.workspace as any;
-      if (ws.leftSplit && typeof ws.leftSplit.collapse === "function") {
-        ws.leftSplit.collapse();
-      }
+      this.app.workspace.leftSplit.collapse();
     }
   }
 
@@ -132,9 +130,9 @@ export class TodoNavView extends ItemView {
     this.contentEl.createDiv({ cls: "todo-sidebar-nav-sep" });
     // Lists
     const listSection = this.contentEl.createDiv({ cls: "todo-nav-section todo-sidebar-nav-list-section" });
-    const lists = this.plugin.listService.getActive().filter((l: any) => !l.isDefault);
+    const lists = this.plugin.listService.getActive().filter((list) => !list.isDefault);
     const groups = this.plugin.groupService.getAll();
-    const ungrouped = lists.filter((l: any) => !l.groupId);
+    const ungrouped = lists.filter((list) => !list.groupId);
     const grouped = new Map<string, typeof lists>();
     for (const l of lists) {
       if (l.groupId) {
@@ -198,9 +196,7 @@ export class TodoNavView extends ItemView {
     setIcon(settingsBtn, "settings");
     settingsBtn.title = "设置";
     settingsBtn.addEventListener("click", () => {
-      const setting = (this.app as any)?.setting;
-      setting?.open();
-      setting?.openTabById("obsidian-todo");
+      openPluginSettings(this.app, "obsidian-todo");
     });
 
     const reviewBtn = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });

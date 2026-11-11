@@ -1,6 +1,6 @@
 import { Vault } from "obsidian";
 import { TodoList, createList } from "../models/List";
-import { StorageService } from "./StorageService";
+import { PersistentJsonService } from "./PersistentJsonService";
 import { logger } from "../utils/logger";
 
 export interface ListStore {
@@ -9,34 +9,28 @@ export interface ListStore {
 
 const STORE_FILENAME = "lists.json";
 
-export class ListService {
-  private storage: StorageService;
-  
+export class ListService extends PersistentJsonService {
   private lists: TodoList[] = [];
-  private loaded = false;
   
   private defaultListName: string;
 
   
   constructor(vault: Vault, folder: string, defaultListName: string) {
-    this.storage = new StorageService(vault, folder);
+    super(vault, folder);
     this.defaultListName = defaultListName;
   }
 
-  
   async init(): Promise<void> {
-    await this.storage.init();
-    const store = await this.storage.read<ListStore>(STORE_FILENAME);
-    if (store && store.lists) {
-      this.lists = store.lists.map((list) => ({ ...list, tags: Array.isArray(list.tags) ? list.tags : [] }));
-      logger.info("Loaded", this.lists.length, "lists");
-    } else {
-      this.lists = [];
-      logger.info("No existing lists, starting fresh");
-    }
-    
-    await this.ensureDefaultList();
-    this.loaded = true;
+    await this.initializeStore<ListStore>(STORE_FILENAME, async (store) => {
+      if (store && store.lists) {
+        this.lists = store.lists.map((list) => ({ ...list, tags: Array.isArray(list.tags) ? list.tags : [] }));
+        logger.info("Loaded", this.lists.length, "lists");
+      } else {
+        this.lists = [];
+        logger.info("No existing lists, starting fresh");
+      }
+      await this.ensureDefaultList();
+    });
   }
 
   
@@ -127,7 +121,7 @@ export class ListService {
 
   private async save(): Promise<void> {
     const store: ListStore = { lists: this.lists };
-    await this.storage.write(STORE_FILENAME, store);
+    await this.persistStore(STORE_FILENAME, store);
   }
 
   
@@ -145,14 +139,7 @@ export class ListService {
   }
 
   
-  /** 清空 StorageService 的文件缓存（供 resetAllData 使用） */
-  public clearCache(): void {
-    this.storage.clearCache();
-  }
-
-    private ensureLoaded(): void {
-    if (!this.loaded) {
-      throw new Error("ListService not initialized. Call init() first.");
-    }
+  private ensureLoaded(): void {
+    this.ensureInitialized("ListService");
   }
 }

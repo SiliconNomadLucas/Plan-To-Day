@@ -5,6 +5,7 @@ import type { PlanKind } from "./models/Task";
 import { logger, LogLevel } from "./utils/logger";
 import type { SortConfig } from "./utils/sort";
 import { isEnglish, localizeDom, setLanguage, systemTagName, t, type TodoLanguage } from "./i18n";
+import { OnboardingModal } from "./ui/OnboardingModal";
 
 export interface ObsidianTodoSettings {
   language: TodoLanguage;
@@ -20,6 +21,7 @@ export interface ObsidianTodoSettings {
   activePlanKind: PlanKind | null;
   sortConfig: SortConfig;
   birthday: string;
+  onboardingCompleted: boolean;
   planGroupCollapsed: boolean;
   quadrantGroupCollapsed: boolean;
   activeScheduleMode: "day" | "week" | "month";
@@ -50,6 +52,7 @@ export const DEFAULT_SETTINGS: ObsidianTodoSettings = {
   selectedQuadrant: null,
   activePlanKind: null,
   birthday: "",
+  onboardingCompleted: false,
   planGroupCollapsed: true,
   quadrantGroupCollapsed: true,
   activeScheduleMode: "month",
@@ -135,6 +138,18 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
         this.plugin.settings.birthday = birthdayInput.value;
         await this.plugin.saveSettings();
       });
+
+      new Setting(group)
+        .setName(t("新手引导"))
+        .setDesc(t("查看插件功能介绍"))
+        .addButton((button) => button
+          .setButtonText(t("重新打开新手引导"))
+          .onClick(() => {
+            new OnboardingModal(this.app, async () => {
+              this.plugin.settings.onboardingCompleted = true;
+              await this.plugin.saveSettings();
+            }).open();
+          }));
     });
 
     // --- Display Settings ---
