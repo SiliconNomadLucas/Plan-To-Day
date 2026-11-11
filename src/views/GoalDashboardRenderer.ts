@@ -63,7 +63,7 @@ export class GoalDashboardRenderer {
     }
     const periodKey = this.periodKey;
     const isCurrentRender = () => this.goalRenderToken === renderToken && this.periodKey === periodKey;
-    this.quickContainerEl.style.display = this.plugin.settings.goalViewMode === "list" ? "none" : "";
+    this.quickContainerEl.toggleClass("todo-is-hidden", this.plugin.settings.goalViewMode === "list");
     if (this.goalKeyHandler) { document.removeEventListener("keydown", this.goalKeyHandler); this.goalKeyHandler = null; }
 
     const stickyHeader = this.taskListEl.createDiv({ cls: "todo-goal-sticky-header" });
@@ -247,7 +247,6 @@ export class GoalDashboardRenderer {
     } else {
     const cards = goalContent.createDiv({ cls: "todo-goal-cards" });
     const goalScrollTarget = cards.createDiv({ cls: "todo-goal-scroll-target" });
-    goalScrollTarget.style.height = "0px";
 
     if (sorted.length === 0) {
       const guide = cards.createDiv({ cls: "todo-goal-guide" });

@@ -1,14 +1,15 @@
 {
   "name": "plan-to-day",
-  "version": "0.1.1",
-  "description": "A Microsoft To-Do style task management plugin for Obsidian",
+  "version": "0.1.2",
+  "description": "Plan long-term goals and daily tasks with lists, schedules, recurring tasks, and reviews",
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
     "test": "vitest run",
     "test:watch": "vitest",
-    "check": "npm run build && npm test",
+    "lint:submission": "eslint main.ts src",
+    "check": "npm run build && npm test && npm run lint:submission",
     "validate:release": "node scripts/validate-release.mjs",
     "release:check": "npm run check && npm run validate:release",
     "version": "node scripts/bump-version.mjs"
@@ -24,9 +25,12 @@
     "@types/node": "^22.0.0",
     "builtin-modules": "^4.0.0",
     "esbuild": "^0.24.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-obsidianmd": "^0.5.1",
     "obsidian": "latest",
     "tslib": "2.7.0",
     "typescript": "5.6.3",
+    "typescript-eslint": "^8.72.2",
     "vitest": "^2.1.9"
   },
   "dependencies": {

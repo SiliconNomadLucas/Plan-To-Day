@@ -66,7 +66,7 @@ export class TodoNavView extends ItemView {
     setIcon(planIcon, "calendar-days");
     planHeader.createSpan({ cls: "todo-nav-group-name", text: "\u6211\u7684\u8ba1\u5212" });
     const planList = planGroup.createDiv({ cls: "todo-nav-group-list" });
-    if (this.plugin.settings.planGroupCollapsed) planList.style.display = "none";
+    planList.toggleClass("todo-is-hidden", this.plugin.settings.planGroupCollapsed);
 
     const planItems: { name: string; kind: PlanKind; icon: string }[] = [
       { name: "\u4eba\u751f\u8ba1\u5212", kind: "life", icon: "globe" },
@@ -86,7 +86,7 @@ export class TodoNavView extends ItemView {
     }
     planHeader.addEventListener("click", () => {
       this.plugin.settings.planGroupCollapsed = !this.plugin.settings.planGroupCollapsed;
-      planList.style.display = this.plugin.settings.planGroupCollapsed ? "none" : "";
+      planList.toggleClass("todo-is-hidden", this.plugin.settings.planGroupCollapsed);
       void this.plugin.saveSettings();
     });
 
@@ -97,7 +97,7 @@ export class TodoNavView extends ItemView {
     setIcon(qIcon, "layout-grid");
     qHeader.createSpan({ cls: "todo-nav-group-name", text: "\u56db\u8c61\u9650" });
     const qList = qGroup.createDiv({ cls: "todo-nav-group-list" });
-    if (this.plugin.settings.quadrantGroupCollapsed) qList.style.display = "none";
+    qList.toggleClass("todo-is-hidden", this.plugin.settings.quadrantGroupCollapsed);
 
     const quadrantDefs = [
       { key: "\u91cd\u8981\u7d27\u6025", icon: "alarm-clock" },
@@ -122,7 +122,7 @@ export class TodoNavView extends ItemView {
     }
     qHeader.addEventListener("click", () => {
       this.plugin.settings.quadrantGroupCollapsed = !this.plugin.settings.quadrantGroupCollapsed;
-      qList.style.display = this.plugin.settings.quadrantGroupCollapsed ? "none" : "";
+      qList.toggleClass("todo-is-hidden", this.plugin.settings.quadrantGroupCollapsed);
       void this.plugin.saveSettings();
     });
 
@@ -148,7 +148,7 @@ export class TodoNavView extends ItemView {
       const arrow = gHeader.createSpan({ cls: "todo-nav-group-arrow" + (g.isCollapsed ? " collapsed" : ""), text: "\u25bc" });
       gHeader.createSpan({ cls: "todo-nav-group-name", text: g.name });
       const gList = gEl.createDiv({ cls: "todo-nav-group-list" });
-      if (g.isCollapsed) gList.style.display = "none";
+      gList.toggleClass("todo-is-hidden", g.isCollapsed);
       for (const l of gLists) {
         const lItem = gList.createDiv({ cls: "todo-nav-item" + (selectedListId === l.id ? " active" : ""), attr: { "data-list-id": l.id } });
         const lIcon = lItem.createSpan({ cls: "todo-nav-icon" });
@@ -162,7 +162,7 @@ export class TodoNavView extends ItemView {
       gHeader.addEventListener("click", async () => {
         await this.plugin.groupService.toggleCollapse(g.id);
         g.isCollapsed = !g.isCollapsed;
-        gList.style.display = g.isCollapsed ? "none" : "";
+        gList.toggleClass("todo-is-hidden", g.isCollapsed);
         arrow.toggleClass("collapsed", g.isCollapsed);
       });
     }

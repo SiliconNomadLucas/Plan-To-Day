@@ -270,8 +270,7 @@ export class RecurrencePickerModal extends Modal {
 
     const intervalRow = this.contentEl.createDiv({ cls: "todo-rec-row" });
     intervalRow.createEl("span", { text: "每 " });
-    const intervalInput = intervalRow.createEl("input", { attr: { type: "number", min: "1", value: "1" } }) as HTMLInputElement;
-    intervalInput.style.width = "50px";
+    const intervalInput = intervalRow.createEl("input", { cls: "todo-rec-interval-input", attr: { type: "number", min: "1", value: "1" } }) as HTMLInputElement;
     const unitSelect = intervalRow.createEl("select") as HTMLSelectElement;
     [{ v: "day", l: "天" }, { v: "week", l: "周" }, { v: "month", l: "月" }, { v: "year", l: "年" }, ...(!isEnglish() ? [{ v: "lunar-monthly", l: "农历月" }, { v: "lunar-yearly", l: "农历年" }] : [])].forEach((u) => {
       const opt = unitSelect.createEl("option", { value: u.v, text: u.l });

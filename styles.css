@@ -824,7 +824,6 @@
   padding: 10px 14px;
   flex-shrink: 0;
   margin-top: auto;
-  position: relative;
   position: sticky;
   bottom: 0;
   background: var(--background-primary);
@@ -1995,7 +1994,9 @@
   text-align: center;
   flex-shrink: 0;
   font-size: 14px;
+  cursor: pointer;
 }
+.todo-relation-item-cb.is-completed { color: var(--interactive-accent); }
 .todo-relation-item-title {
   flex: 1;
   font-size: 13px;
@@ -2799,6 +2800,8 @@
   pointer-events: none;
   border: 2px dashed var(--interactive-accent);
 }
+.todo-drag-ghost-day { left: 48px; right: 4px; width: auto; top: 0; height: 60px; }
+.todo-drag-ghost-week { top: 0; height: 60px; }
 .todo-week-column { cursor: default; }
 .todo-week-column .todo-time-event-block:hover { cursor: grab; }
 .todo-event-time {
@@ -4109,7 +4112,7 @@
 /* ===== Quarterly Goals Section (monthly view) ===== */
 .todo-goal-quarter-section{padding:8px 0 12px}
 .todo-goal-quarter-label{font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px}
-.todo-goal-quarter-scroll{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;scrollbar-width:thin}
+.todo-goal-quarter-scroll{display:flex;gap:10px;overflow-x:auto;padding-bottom:6px}
 .todo-goal-quarter-scroll::-webkit-scrollbar{height:4px}
 .todo-goal-quarter-scroll::-webkit-scrollbar-thumb{background:var(--background-modifier-border);border-radius:4px}
 .todo-goal-quarter-card{flex:0 0 auto;min-width:140px;max-width:200px;padding:10px 12px;border-radius:8px;background:var(--background-secondary);border:1px solid var(--background-modifier-border);cursor:grab;transition:border-color 0.15s,box-shadow 0.15s}
@@ -4428,3 +4431,8 @@
 .todo-onboarding-body{color:var(--text-normal);line-height:1.6;min-height:72px}
 .todo-onboarding-actions{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:24px}
 .todo-onboarding-navigation{display:flex;align-items:center;gap:8px}
+
+.todo-is-hidden{display:none}
+.todo-rec-interval-input{width:50px}
+.todo-review-stat-clickable{cursor:pointer}
+.todo-goal-scroll-target{height:0}

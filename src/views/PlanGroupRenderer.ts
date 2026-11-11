@@ -53,7 +53,7 @@ export class PlanGroupRenderer {
       addButton.title = "\u65b0\u5efa\u4efb\u52a1";
       const body = group.createDiv({ cls: "todo-plan-group-body" });
       body.dataset.periodKey = periodKey;
-      if (!isCurrent) body.style.display = "none";
+      body.toggleClass("todo-is-hidden", !isCurrent);
       for (const task of tasks) this.callbacks.renderTaskRow(body, task);
       this.setupAddButton(addButton, body, kind, periodKey);
       this.attachCollapse(header, body, arrow);
@@ -78,7 +78,7 @@ export class PlanGroupRenderer {
         subAddButton.title = "\u65b0\u5efa\u4efb\u52a1";
         const subBody = subGroup.createDiv({ cls: "todo-plan-group-body" });
         subBody.dataset.periodKey = subKey;
-        if (!isCurrentSub) subBody.style.display = "none";
+        subBody.toggleClass("todo-is-hidden", !isCurrentSub);
         for (const task of subTasks) this.callbacks.renderTaskRow(subBody, task);
         this.setupAddButton(subAddButton, subBody, subKind, subKey);
         this.attachCollapse(subHeader, subBody, subArrow);
@@ -108,7 +108,7 @@ export class PlanGroupRenderer {
       addButton.title = "\u65b0\u5efa\u4efb\u52a1";
       const body = group.createDiv({ cls: "todo-plan-group-body" });
       body.dataset.periodKey = subKey;
-      if (!expanded) body.style.display = "none";
+      body.toggleClass("todo-is-hidden", !expanded);
       for (const task of tasks) this.callbacks.renderTaskRow(body, task);
       this.setupAddButton(addButton, body, subKind, subKey);
       this.attachCollapse(header, body, arrow);
@@ -118,8 +118,8 @@ export class PlanGroupRenderer {
   private attachCollapse(header: HTMLElement, body: HTMLElement, arrow: HTMLElement): void {
     header.addEventListener("click", (event) => {
       if (event.target instanceof HTMLElement && event.target.closest(".todo-plan-add-btn")) return;
-      const expanded = body.style.display === "none";
-      body.style.display = expanded ? "" : "none";
+      const expanded = body.classList.contains("todo-is-hidden");
+      body.toggleClass("todo-is-hidden", !expanded);
       arrow.toggleClass("collapsed", !expanded);
     });
   }
@@ -131,8 +131,8 @@ export class PlanGroupRenderer {
         void this.callbacks.promptPlanCreate(kind, periodKey);
         return;
       }
-      if (body.style.display === "none") {
-        body.style.display = "";
+      if (body.classList.contains("todo-is-hidden")) {
+        body.removeClass("todo-is-hidden");
         body.parentElement?.querySelector(".todo-plan-group-arrow")?.removeClass("collapsed");
       }
       if (body.querySelector(".todo-plan-inline-input")) return;

@@ -4,6 +4,12 @@
 
 插件以 Vault 本地数据为核心，不依赖云端服务，支持桌面端和移动端。
 
+## Overview (English)
+
+Plan to Day is a local-first task and goal planner. Break life goals into yearly, quarterly, monthly, and weekly plans, then turn weekly goals into actionable tasks for My Day. Organize tasks in lists, schedule and repeat them, and review progress over time.
+
+Your tasks and backups stay in your vault (by default in the `todo/` folder). The task suggestions use local rules and do not require an account, API key, or network connection. To install manually, place `main.js`, `manifest.json`, and `styles.css` in `.obsidian/plugins/plan-to-day/` and enable the plugin in Community plugins.
+
 ## 功能概览
 
 ### 任务管理
@@ -156,7 +162,7 @@ src/
 
 ## 兼容性
 
-- Obsidian `1.0.0` 或更高版本
+- Obsidian `1.7.2` 或更高版本
 - 支持桌面端
 - 支持移动端
 - 中文和英文界面
@@ -171,7 +177,7 @@ src/
 
 ## 项目状态
 
-当前版本：`0.1.1`
+当前版本：`0.1.2`
 
 核心任务管理、计划视图、日程视图、复盘统计、回收站、重复任务、移动端侧栏和本地待办事项推荐已经实现，项目仍处于持续完善阶段。
 
@@ -181,4 +187,4 @@ src/
 
 ## 作者
 
-[Weitanaii](https://github.com/Weitanaii)
+Weitanaii

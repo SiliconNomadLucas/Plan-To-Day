@@ -84,7 +84,7 @@ export default class ObsidianTodoPlugin extends Plugin {
 
     this.addCommand({
       id: "open-todo-tab",
-      name: "Open Plan to Day",
+      name: "Open task view",
       callback: async () => {
         await this.activateView();
       },

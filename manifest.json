@@ -1,10 +1,9 @@
 {
   "id": "plan-to-day",
   "name": "Plan to Day",
-  "version": "0.1.1",
-  "minAppVersion": "1.0.0",
-  "description": "A Microsoft To-Do style task management plugin for Obsidian. Manage tasks with lists, My Day, priorities, sub-tasks, and more.",
+  "version": "0.1.2",
+  "minAppVersion": "1.7.2",
+  "description": "Plan long-term goals and daily tasks with lists, schedules, recurring tasks, and progress reviews.",
   "author": "Weitanaii",
-  "authorUrl": "https://github.com/Weitanaii",
   "isDesktopOnly": false
 }

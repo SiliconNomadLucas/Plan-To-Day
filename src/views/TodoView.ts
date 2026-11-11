@@ -469,7 +469,7 @@ export class TodoView extends ItemView {
     this.filterBtnEl.addEventListener("click", (ev) => this.showStatusFilterMenu(ev));
     this.aiBtnEl = taskHeader.createEl("button", { cls: "todo-sort-btn todo-ai-btn" }) as HTMLButtonElement;
     setIcon(this.aiBtnEl, "list-checks");
-    this.aiBtnEl.style.display = "none";
+    this.aiBtnEl.addClass("todo-is-hidden");
     this.aiBtnEl.title = t("待办事项推荐");
     this.aiBtnEl.addEventListener("click", () => {
       const layout = this.containerEl.querySelector(".todo-layout");
@@ -505,7 +505,7 @@ export class TodoView extends ItemView {
     setIcon(planIcon, "calendar-days");
     planHeader.createSpan({ cls: "todo-nav-group-name", text: "\u6211\u7684\u8ba1\u5212" });
     const planList = this.planGroupEl.createDiv({ cls: "todo-nav-group-list" });
-    if (this.plugin.settings.planGroupCollapsed) planList.style.display = "none";
+    planList.toggleClass("todo-is-hidden", this.plugin.settings.planGroupCollapsed);
     const planItems = [
       { name: "人生计划", kind: "life" as PlanKind, icon: "globe" },
       { name: "年度计划", kind: "year" as PlanKind, icon: "calendar-check" },
@@ -522,7 +522,7 @@ export class TodoView extends ItemView {
     }
     planHeader.addEventListener("click", () => {
       this.plugin.settings.planGroupCollapsed = !this.plugin.settings.planGroupCollapsed;
-      planList.style.display = this.plugin.settings.planGroupCollapsed ? "none" : "";
+      planList.toggleClass("todo-is-hidden", this.plugin.settings.planGroupCollapsed);
       void this.plugin.saveSettings();
     });
 
@@ -533,7 +533,7 @@ export class TodoView extends ItemView {
     setIcon(qIcon, "layout-grid");
     qHeader.createSpan({ cls: "todo-nav-group-name", text: "\u56db\u8c61\u9650" });
     const qList = this.quadrantGroupEl.createDiv({ cls: "todo-nav-group-list" });
-    if (this.plugin.settings.quadrantGroupCollapsed) qList.style.display = "none";
+    qList.toggleClass("todo-is-hidden", this.plugin.settings.quadrantGroupCollapsed);
     const quadrantDefs = [
       { key: "重要紧急", color: "#E74C3C", icon: "alarm-clock" },
       { key: "重要不紧急", color: "#4A90D9", icon: "calendar-check" },
@@ -564,7 +564,7 @@ export class TodoView extends ItemView {
     }
     qHeader.addEventListener("click", () => {
       this.plugin.settings.quadrantGroupCollapsed = !this.plugin.settings.quadrantGroupCollapsed;
-      qList.style.display = this.plugin.settings.quadrantGroupCollapsed ? "none" : "";
+      qList.toggleClass("todo-is-hidden", this.plugin.settings.quadrantGroupCollapsed);
       void this.plugin.saveSettings();
     });
 
@@ -1002,19 +1002,19 @@ export class TodoView extends ItemView {
       const isMonthlyPlan = activeViewNav === "plan" && this.activePlanKind === "month";
       const showAi = isMyday || isMonthlyPlan;
       const isTaskView = activeViewNav === "all" || activeViewNav === "inbox" || !!selectedListId;
-      this.aiBtnEl.style.display = showAi ? "" : "none";
+      this.aiBtnEl.toggleClass("todo-is-hidden", !showAi);
       this.aiBtnEl.title = t(isMonthlyPlan ? "周计划推荐" : "待办事项推荐");
-      this.filterBtnEl.style.display = isTaskView ? "" : "none";
+      this.filterBtnEl.toggleClass("todo-is-hidden", !isTaskView);
       this.filterBtnEl.style.marginLeft = isMyday ? "auto" : "4px";
       this.filterBtnEl.title = t("状态筛选");
       this.filterBtnEl.setAttribute("aria-label", t("状态筛选"));
-      if (isMyday) this.sortBtnEl.style.display = "none";
+      if (isMyday) this.sortBtnEl.addClass("todo-is-hidden");
     }
 
     // Update subtitle
     if (this.headerSubEl) {
       this.headerSubEl.textContent = "";
-      this.headerSubEl.style.display = "none";
+      this.headerSubEl.addClass("todo-is-hidden");
     }
     localizeDom(this.containerEl);
   }
@@ -1048,8 +1048,8 @@ private async activateNav(nav: ViewNav): Promise<void> {
     }
     if (nav === "review") {
       this.plugin.settings.selectedQuadrant = null;
-      this.sortBtnEl.style.display = "none";
-      this.quickContainerEl.style.display = "none";
+      this.sortBtnEl.addClass("todo-is-hidden");
+      this.quickContainerEl.addClass("todo-is-hidden");
       this.reviewMode = this.plugin.settings.activeReviewMode || "day";
       const now = new Date();
       this.reviewYear = now.getFullYear();
@@ -1070,8 +1070,8 @@ private async activateNav(nav: ViewNav): Promise<void> {
     }
     if (nav === "schedule") {
       this.plugin.settings.selectedQuadrant = null;
-      this.sortBtnEl.style.display = "none";
-      this.quickContainerEl.style.display = "none";
+      this.sortBtnEl.addClass("todo-is-hidden");
+      this.quickContainerEl.addClass("todo-is-hidden");
       this.scheduleMode = this.plugin.settings.activeScheduleMode || "month";
       const now = new Date();
       this.scheduleYear = now.getFullYear();
@@ -1092,8 +1092,8 @@ private async activateNav(nav: ViewNav): Promise<void> {
     }
     if (nav === "trash") {
       this.plugin.settings.selectedQuadrant = null;
-      this.sortBtnEl.style.display = "none";
-      this.quickContainerEl.style.display = "none";
+      this.sortBtnEl.addClass("todo-is-hidden");
+      this.quickContainerEl.addClass("todo-is-hidden");
       Object.entries(this.navEls).forEach(([, el]) => el.removeClass("active"));
       this.taskListEl.addClass("todo-trash-active");
       this.taskListEl.removeClass("todo-schedule-active");
@@ -1105,7 +1105,7 @@ private async activateNav(nav: ViewNav): Promise<void> {
     }
     if (nav === "plan" && this.activePlanKind) {
       this.plugin.settings.selectedQuadrant = null;
-      this.sortBtnEl.style.display = "none";
+      this.sortBtnEl.addClass("todo-is-hidden");
       this.updateQuickPlaceholder();
       await this.plugin.saveSettings();
       await this.renderLists();
@@ -1124,8 +1124,8 @@ private async activateNav(nav: ViewNav): Promise<void> {
     this.activePlanKind = null;
     this.plugin.settings.activePlanKind = null;
     this.plugin.settings.selectedQuadrant = null;
-    this.sortBtnEl.style.display = nav === "myday" ? "none" : "";
-    this.quickContainerEl.style.display = "";
+    this.sortBtnEl.toggleClass("todo-is-hidden", nav === "myday");
+    this.quickContainerEl.removeClass("todo-is-hidden");
     this.taskListEl.removeClass("todo-schedule-active");
     this.taskListEl.removeClass("todo-trash-active");
     this.taskListEl.removeClass("todo-review-active");
@@ -1225,7 +1225,7 @@ private async activateNav(nav: ViewNav): Promise<void> {
         await this.plugin.groupService.toggleCollapse(group.id);
         arrow.toggleClass("collapsed", !group.isCollapsed);
         const listEl = groupEl.querySelector(".todo-nav-group-list") as HTMLElement;
-        if (listEl) listEl.style.display = group.isCollapsed ? "" : "none";
+        if (listEl) listEl.toggleClass("todo-is-hidden", !group.isCollapsed);
         await this.renderLists();
       });
 
@@ -1235,7 +1235,7 @@ private async activateNav(nav: ViewNav): Promise<void> {
       });
 
       const listEl = groupEl.createDiv({ cls: "todo-nav-group-list" });
-      if (group.isCollapsed) listEl.style.display = "none";
+      listEl.toggleClass("todo-is-hidden", group.isCollapsed);
       for (const list of groupLists) {
         this.renderListItem(listEl, list, group.id);
       }
@@ -1567,7 +1567,7 @@ private async activateNav(nav: ViewNav): Promise<void> {
 
   private async renderTasks(view: ViewNav | "list"): Promise<void> {
     if (view === "plan" && this.activePlanKind) {
-      this.sortBtnEl.style.display = "none";
+      this.sortBtnEl.addClass("todo-is-hidden");
       this.updateQuickPlaceholder();
       if (this.activePlanKind === 'life') {
         await this.renderLifePlanView();
@@ -1580,10 +1580,10 @@ private async activateNav(nav: ViewNav): Promise<void> {
     }
     // My Day uses fixed time-group ordering and must never expose the global sort control.
     const isMyDayView = view === "myday" && !this.plugin.settings.selectedListId;
-    this.sortBtnEl.style.display = isMyDayView ? "none" : "";
+    this.sortBtnEl.toggleClass("todo-is-hidden", isMyDayView);
     this.taskListEl.removeClass("todo-goal-active");
     this.taskListEl.removeClass("todo-life-active");
-    this.quickContainerEl.style.display = this.plugin.settings.activeViewNav === "inbox" ? "none" : "";
+    this.quickContainerEl.toggleClass("todo-is-hidden", this.plugin.settings.activeViewNav === "inbox");
     this.taskListEl.empty();
 
     
@@ -1675,11 +1675,11 @@ private async activateNav(nav: ViewNav): Promise<void> {
       });
       overdueHeader.createSpan({ cls: "todo-overdue-label", text: "已逾期 " + overdue.length });
       const overdueList = overdueGroup.createDiv({ cls: "todo-overdue-list" });
-      if (this.plugin.settings.overdueCollapsed) { overdueList.style.display = "none"; }
+      overdueList.toggleClass("todo-is-hidden", this.plugin.settings.overdueCollapsed);
       overdue.forEach((task) => this.renderTaskRow(overdueList, task, currentView));
       overdueHeader.addEventListener("click", async () => {
         this.plugin.settings.overdueCollapsed = !this.plugin.settings.overdueCollapsed;
-        overdueList.style.display = this.plugin.settings.overdueCollapsed ? "none" : "";
+        overdueList.toggleClass("todo-is-hidden", this.plugin.settings.overdueCollapsed);
         overdueArrow.toggleClass("collapsed", this.plugin.settings.overdueCollapsed);
         await this.plugin.saveSettings();
       });
@@ -1696,16 +1696,14 @@ private async activateNav(nav: ViewNav): Promise<void> {
       header.createSpan({ cls: "todo-completed-label", text: `已完成 ${completed.length}` });
 
       const list = group.createDiv({ cls: "todo-completed-list" });
-      if (this.plugin.settings.completedCollapsed) {
-        list.style.display = "none";
-      }
+      list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
 
       completed.forEach((task) => this.renderTaskRow(list, task, currentView));
 
       header.addEventListener("click", async () => {
         this.plugin.settings.completedCollapsed = !this.plugin.settings.completedCollapsed;
         await this.plugin.saveSettings();
-        list.style.display = this.plugin.settings.completedCollapsed ? "none" : "";
+        list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
         arrow.toggleClass("collapsed", this.plugin.settings.completedCollapsed);
       });
     }
@@ -1741,12 +1739,12 @@ private async activateNav(nav: ViewNav): Promise<void> {
           const arrow = header.createSpan({ cls: "todo-completed-arrow" + (this.plugin.settings.completedCollapsed ? " collapsed" : ""), text: "\u25bc" });
           header.createSpan({ cls: "todo-completed-label", text: "\u5df2\u5b8c\u6210 " + completed.length });
           const list = group.createDiv({ cls: "todo-completed-list" });
-          if (this.plugin.settings.completedCollapsed) list.style.display = "none";
+          list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
           completed.forEach((task) => this.renderTaskRow(list, task, "all"));
           header.addEventListener("click", async () => {
             this.plugin.settings.completedCollapsed = !this.plugin.settings.completedCollapsed;
             await this.plugin.saveSettings();
-            list.style.display = this.plugin.settings.completedCollapsed ? "none" : "";
+            list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
             arrow.toggleClass("collapsed", this.plugin.settings.completedCollapsed);
           });
         }
@@ -2126,7 +2124,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   private updateQuickPlaceholder(): void {
     const { activeViewNav, selectedListId } = this.plugin.settings;
     if (activeViewNav === "plan") {
-      this.quickContainerEl.style.display = "";
+      this.quickContainerEl.removeClass("todo-is-hidden");
       const pk = this.activePlanKind;
       if (pk === "life") this.quickInputEl.placeholder = "新建人生目标...";
       else if (pk === "year") this.quickInputEl.placeholder = "新建年度目标...";
@@ -2135,7 +2133,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       localizeDom(this.containerEl);
       return;
     }
-    this.quickContainerEl.style.display = activeViewNav === "inbox" ? "none" : "";
+    this.quickContainerEl.toggleClass("todo-is-hidden", activeViewNav === "inbox");
     if (activeViewNav === "myday") {
       this.quickInputEl.placeholder = "添加任务到我的一天...";
       localizeDom(this.containerEl);
@@ -2282,7 +2280,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     if (planListEl) planListEl.querySelectorAll(".todo-plan-item").forEach((el: Element, i: number) => {
       el.toggleClass("active", (kind === "life" && i === 0) || (kind === "year" && i === 1) || (kind === "month" && i === 2));
     });
-    this.sortBtnEl.style.display = "none";
+    this.sortBtnEl.addClass("todo-is-hidden");
     this.updateQuickPlaceholder();
     this.taskListEl.empty();
     if (kind === "life") {
@@ -2334,7 +2332,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     // Expand the body that directly matches the task's period key
     const directBody = this.taskListEl?.querySelector(`[data-period-key="${task.planPeriodKey}"]`) as HTMLElement | null;
     if (directBody) {
-      directBody.style.display = "";
+      directBody.removeClass("todo-is-hidden");
       const arrow = directBody.parentElement?.querySelector(".todo-plan-group-arrow");
       if (arrow) arrow.removeClass("collapsed");
     }
@@ -2346,7 +2344,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       if (parentKey) {
         const parentBody = this.taskListEl?.querySelector(`[data-period-key="${parentKey}"]`) as HTMLElement | null;
         if (parentBody) {
-          parentBody.style.display = "";
+          parentBody.removeClass("todo-is-hidden");
           const parentArrow = parentBody.parentElement?.querySelector(".todo-plan-group-arrow");
           if (parentArrow) parentArrow.removeClass("collapsed");
         }
@@ -2806,13 +2804,8 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   }
 
   private startAllDayDrag(event: MouseEvent, task: Task, card: HTMLElement, grid: HTMLDivElement, dateStr: string): void {
-    const ghost = grid.createDiv({ cls: "todo-drag-ghost" });
+    const ghost = grid.createDiv({ cls: "todo-drag-ghost todo-drag-ghost-day" });
     ghost.style.backgroundColor = this.getTaskBlockColor(task);
-    ghost.style.left = "48px";
-    ghost.style.right = "4px";
-    ghost.style.width = "auto";
-    ghost.style.top = "0px";
-    ghost.style.height = "60px";
     this.dragState = {
       type: "move",
       taskId: task.id,
@@ -2842,7 +2835,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   private startWeekAllDayDrag(event: MouseEvent, task: Task, card: HTMLElement, grid: HTMLDivElement, weekStart: Date, columnIndex: number): void {
     const columnsEl = grid.querySelector(".todo-week-columns") as HTMLElement | null;
     const ghostParent = columnsEl || grid;
-    const ghost = ghostParent.createDiv({ cls: "todo-drag-ghost" });
+    const ghost = ghostParent.createDiv({ cls: "todo-drag-ghost todo-drag-ghost-week" });
     const colCount = 7;
     const columnsRect = columnsEl?.getBoundingClientRect() || null;
     const colWidth = columnsRect ? columnsRect.width / colCount : 0;
@@ -2854,8 +2847,6 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     ghost.style.backgroundColor = this.getTaskBlockColor(task);
     ghost.style.left = columnIndex * colWidth + "px";
     ghost.style.width = colWidth + "px";
-    ghost.style.top = "0px";
-    ghost.style.height = "60px";
     this.dragState = {
       type: "move",
       taskId: task.id,

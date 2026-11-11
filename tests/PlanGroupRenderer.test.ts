@@ -57,8 +57,8 @@ describe("PlanGroupRenderer", () => {
     expect(renderTaskRow).toHaveBeenCalledTimes(2);
     const currentBody = container.find((element) => element.dataset.periodKey === "2026-Q4")!;
     const oldBody = container.find((element) => element.dataset.periodKey === "2025-Q4")!;
-    expect(currentBody.style.display).toBeUndefined();
-    expect(oldBody.style.display).toBe("none");
+    expect(currentBody.classList.contains("todo-is-hidden")).toBe(false);
+    expect(oldBody.classList.contains("todo-is-hidden")).toBe(true);
 
     const currentGroup = currentBody.closest(".todo-plan-group-body")!;
     expect(currentGroup).toBe(currentBody);
@@ -67,12 +67,12 @@ describe("PlanGroupRenderer", () => {
       && element.children.some((child) => child.textContent === "2026 Q4 计划"),
     )!;
     currentHeader.trigger("click");
-    expect(currentBody.style.display).toBe("none");
+    expect(currentBody.classList.contains("todo-is-hidden")).toBe(true);
     const addButton = currentHeader.find((element) => element.className.includes("todo-plan-add-btn"))!;
     currentHeader.trigger("click", { target: addButton });
-    expect(currentBody.style.display).toBe("none");
+    expect(currentBody.classList.contains("todo-is-hidden")).toBe(true);
     await addButton.triggerAsync("click", { target: addButton, stopPropagation: vi.fn() });
-    expect(currentBody.style.display).toBe("");
+    expect(currentBody.classList.contains("todo-is-hidden")).toBe(false);
     const input = byClass(currentBody, "todo-plan-inline-input").find((element) => element.tag === "input")!;
     input.value = "New quarterly task";
     await input.triggerAsync("keydown", { key: "Enter", preventDefault: vi.fn() });
@@ -109,7 +109,7 @@ describe("PlanGroupRenderer", () => {
 
     const currentBody = container.find((element) => element.dataset.periodKey === currentWeek)!;
     expect(currentBody).toBeDefined();
-    expect(currentBody.style.display).toBeUndefined();
+    expect(currentBody.classList.contains("todo-is-hidden")).toBe(false);
     const rowCall = renderTaskRow.mock.calls.find((call) => call[0] === currentBody);
     expect(rowCall?.[1].id).toBe(task.id);
     const group = currentBody.parentElement!;

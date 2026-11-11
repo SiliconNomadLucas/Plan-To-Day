@@ -18,7 +18,7 @@ export function renderStatCard(
   const valueEl = card.createDiv({ cls: "todo-review-stat-value", text: value });
   valueEl.style.color = color;
   card.createDiv({ cls: "todo-review-stat-label", text: label });
-  if (onClick) { card.style.cursor = "pointer"; card.addEventListener("click", onClick); }
+  if (onClick) { card.addClass("todo-review-stat-clickable"); card.addEventListener("click", onClick); }
 }
 
 /** 渲染纯 CSS 纵向柱状图 */

@@ -45,6 +45,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     steps:
       - name: Download validated build artifacts
         uses: actions/download-artifact@v8
@@ -52,7 +54,17 @@ jobs:
           name: plugin-release
           path: dist
 
+      - name: Attest plugin code
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/main.js
+
+      - name: Attest plugin styles
+        uses: actions/attest@v4
+        with:
+          subject-path: dist/styles.css
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" dist/main.js dist/manifest.json dist/styles.css --repo "$GITHUB_REPOSITORY" --generate-notes --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" dist/main.js dist/manifest.json dist/styles.css --repo "$GITHUB_REPOSITORY" --title "Plan to Day $GITHUB_REF_NAME" --generate-notes --verify-tag

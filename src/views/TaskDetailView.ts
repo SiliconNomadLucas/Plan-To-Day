@@ -561,8 +561,7 @@ export class TaskDetailView {
       const item = section.createDiv({ cls: "todo-relation-item" });
       const cb = item.createSpan({ cls: "todo-relation-item-cb" });
       cb.textContent = child.isCompleted ? "✓" : "";
-      cb.style.cursor = "pointer";
-      if (child.isCompleted) cb.style.color = "var(--interactive-accent)";
+      cb.toggleClass("is-completed", child.isCompleted);
       cb.addEventListener("click", async (ev) => {
         ev.stopPropagation();
         if (child.isCompleted) { await ts.uncomplete(child.id); } else { await ts.complete(child.id); }
