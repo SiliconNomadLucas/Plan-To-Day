@@ -187,4 +187,6 @@ src/
 
 ## 作者
 
-Weitanaii
+[SiliconNomadLucas](https://github.com/SiliconNomadLucas)
+
+项目仓库：[Plan to Day](https://github.com/SiliconNomadLucas/Plan-To-Day)
