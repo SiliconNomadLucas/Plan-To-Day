@@ -1,6 +1,6 @@
 import { App, Menu, Notice, setIcon, TFile, TFolder } from "obsidian";
 import type { TodoPluginLike } from "./TodoView";
-import type { Task, PlanKind } from "../models/Task";
+import type { Task } from "../models/Task";
 import type { DomainTag } from "../models/Tag";
 import { ResourceSuggestModal } from "../ui/ResourceSuggestModal";
 import { ConfirmModal, NoteEditModal, WeekSplitModal } from "../ui/TaskEditModals";
@@ -9,6 +9,7 @@ import { ParentPickerModal, TagPickerModal } from "../ui/TaskPickerModals";
 import { formatRecurrenceDisplay } from "../utils/recurrence";
 import { localTodayStr, ageFromDueDate } from "../utils/period";
 import { isEnglish, localizeDom, systemTagName, t } from "../i18n";
+import { runAsyncAction } from "../utils/async-action";
 
 export interface ScheduleSidebarItem {
   id: string;
@@ -191,11 +192,11 @@ export class TaskDetailView {
 
     // --- Title row + star ---
     const titleRow = this.root.createDiv({ cls: "todo-detail-title-row" });
-    this.titleInput = titleRow.createEl("input", { cls: "todo-detail-title-input", attr: { type: "text", placeholder: "任务标题" } }) as HTMLInputElement;
+    this.titleInput = titleRow.createEl("input", { cls: "todo-detail-title-input", attr: { type: "text", placeholder: "任务标题" } });
     this.titleInput.value = task.title || "";
     const starBtn = titleRow.createDiv({ cls: "todo-detail-star" + (task.isImportant ? " is-important" : "") });
     setIcon(starBtn, "star");
-    starBtn.addEventListener("click", () => void this.toggleImportant(starBtn, task));
+    starBtn.addEventListener("click", () => void this.toggleImportant(starBtn));
     this.titleInput.addEventListener("blur", () => {
       const next = this.titleInput.value.trim();
       if (!next) { this.titleInput.value = task.title || ""; return; }
@@ -215,9 +216,9 @@ export class TaskDetailView {
     const noteLabel = noteSection.createDiv({ cls: "todo-detail-label" });
     setIcon(noteLabel, "pen-line");
     noteLabel.createSpan({ text: " 备注" });
-    this.noteInput = noteSection.createEl("textarea", { cls: "todo-detail-textarea", attr: { rows: "2" } }) as HTMLTextAreaElement;
+    this.noteInput = noteSection.createEl("textarea", { cls: "todo-detail-textarea", attr: { rows: "2" } });
     this.noteInput.value = task.note || "";
-    this.noteInput.addEventListener("focus", async (ev) => {
+    this.noteInput.addEventListener("focus", (ev) => { runAsyncAction((async () => {
       if (window.innerWidth <= 600) {
         ev.preventDefault();
         this.noteInput.blur();
@@ -226,7 +227,7 @@ export class TaskDetailView {
         this.noteInput.value = result;
         if (result !== (task.note || "")) void this.saveChanges({ note: result });
       }
-    });
+    })(), "TaskDetailView interaction"); });
     this.noteInput.addEventListener("blur", () => {
       const next = this.noteInput.value;
       if (next !== (task.note || "")) void this.saveChanges({ note: next });
@@ -244,8 +245,7 @@ export class TaskDetailView {
       const deleteSeriesBtn = bottomBar.createDiv({ cls: "todo-detail-delete" });
       setIcon(deleteSeriesBtn, "trash");
       deleteSeriesBtn.title = "删除整个系列";
-      deleteSeriesBtn.addEventListener("click", async () => {
-        const groupInstances = this.plugin.taskService.getGroupInstances(task.recurrenceGroupId!);
+      deleteSeriesBtn.addEventListener("click", () => { runAsyncAction((async () => {
         const confirmed = await new ConfirmModal(this.app, "将删除当前及未来的重复任务，过去记录保留。确定继续？").openAndConfirm();
         if (!confirmed) return;
         await this.plugin.taskService.deleteSeries(task.recurrenceGroupId!);
@@ -255,7 +255,7 @@ export class TaskDetailView {
         this.close();
         this.onClose?.();
         this.onTaskUpdated?.(task.id);
-      });
+      })(), "TaskDetailView interaction"); });
     }
     const deleteBtn = bottomBar.createDiv({ cls: "todo-detail-delete" });
     setIcon(deleteBtn, "trash-2");
@@ -266,7 +266,7 @@ export class TaskDetailView {
     setIcon(starBtn, "star");
   }
 
-  private async toggleImportant(starBtn: HTMLElement, _task: Task): Promise<void> {
+  private async toggleImportant(starBtn: HTMLElement): Promise<void> {
     const current = starBtn.hasClass("is-important");
     const next = !current;
     this.updateStarState(starBtn, next);
@@ -448,7 +448,7 @@ export class TaskDetailView {
       unsetText: "设置重复",
       isSet: hasRec,
       displayText: display,
-      onClick: () => { new RecurrencePickerModal(this.app, task.recurrence, async (rec) => { await this.plugin.taskService.setRecurrence(task.id, rec); this.plugin.settings.selectedTaskId = null; await this.plugin.saveSettings(); this.close(); this.onClose?.(); this.onTaskUpdated?.(task.id); }).open(); },
+      onClick: () => { new RecurrencePickerModal(this.app, task.recurrence, (rec) => { runAsyncAction((async () => { await this.plugin.taskService.setRecurrence(task.id, rec); this.plugin.settings.selectedTaskId = null; await this.plugin.saveSettings(); this.close(); this.onClose?.(); this.onTaskUpdated?.(task.id); })(), "TaskDetailView interaction"); }).open(); },
       onClear: () => {
         // 取消重复：保留当前任务，仅删除更晚的未完成重复实例
         if (task.recurrenceGroupId && task.recurrence) {
@@ -493,7 +493,7 @@ export class TaskDetailView {
     if (!this.root.hasClass("todo-detail-active")) return;
     this.titleInput.value = task.title || "";
     this.noteInput.value = task.note || "";
-    const starBtn = this.root.querySelector(".todo-detail-star") as HTMLElement | null;
+    const starBtn = this.root.querySelector<HTMLElement>(".todo-detail-star");
     if (starBtn) this.updateStarState(starBtn, task.isImportant);
     // Refresh property rows
     this.propsEl.empty();
@@ -562,11 +562,11 @@ export class TaskDetailView {
       const cb = item.createSpan({ cls: "todo-relation-item-cb" });
       cb.textContent = child.isCompleted ? "✓" : "";
       cb.toggleClass("is-completed", child.isCompleted);
-      cb.addEventListener("click", async (ev) => {
+      cb.addEventListener("click", (ev) => { runAsyncAction((async () => {
         ev.stopPropagation();
         if (child.isCompleted) { await ts.uncomplete(child.id); } else { await ts.complete(child.id); }
         this.onTaskUpdated?.(task.id);
-      });
+      })(), "TaskDetailView interaction"); });
       const itemTitle = item.createSpan({ cls: "todo-relation-item-title" + (child.isCompleted ? " completed" : ""), text: child.title || "未命命" });
       itemTitle.addEventListener("click", () => {
         if (this.taskId) {
@@ -578,10 +578,10 @@ export class TaskDetailView {
       });
       const removeBtn = item.createSpan({ cls: "todo-relation-item-remove" });
       setIcon(removeBtn, "x");
-      removeBtn.addEventListener("click", async () => {
+      removeBtn.addEventListener("click", () => { runAsyncAction((async () => {
         await ts.update(child.id, { parentId: undefined });
         this.onTaskUpdated?.(task.id);
-      });
+      })(), "TaskDetailView interaction"); });
     }
   }
   private getAncestorIds(taskId: string): string[] {
@@ -674,7 +674,7 @@ export class TaskDetailView {
         nameEl.title = item.path;
         if (!item.isFolder) {
           nameEl.addEventListener("click", () => {
-            this.app.workspace.openLinkText(item.path, "", true);
+            runAsyncAction(this.app.workspace.openLinkText(item.path, "", true), "open related file");
           });
         }
         const removeBtn = row.createSpan({ cls: "todo-related-item-remove" });

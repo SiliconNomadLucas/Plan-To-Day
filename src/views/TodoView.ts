@@ -114,10 +114,9 @@ class DateOnlyModal extends Modal {
   openAndGetValue(): Promise<string | null> { return new Promise((resolve) => { this.resolve = resolve; this.open(); }); }
 }
 import { App, ItemView, Menu, Modal, Notice, setIcon, WorkspaceLeaf } from "obsidian";
-import type ObsidianTodoPlugin from "../../main";
 import { Task, MyDayGroup, PlanKind } from "../models/Task";
 import { extractLocalDate } from "../utils/recurrence";
-import { localTodayStr, currentPeriodKey, getSubPeriodKeysForParent, getParentPeriodKey, getPeriodKeyForDate, getISOWeekNumber, getISOWeekRange } from "../utils/period";
+import { localTodayStr, currentPeriodKey, getSubPeriodKeysForParent, getParentPeriodKey, getPeriodKeyForDate, getISOWeekNumber } from "../utils/period";
 import { TaskDetailView, ScheduleSidebarItem } from "./TaskDetailView";
 import type { RecurrenceSeriesService } from "../services/RecurrenceSeriesService";
 import { AIRecommendationView } from "./AIRecommendationView";
@@ -126,7 +125,6 @@ import { sortTasks, getMyDayGroupFromTime } from "../utils/sort";
 import type { SortConfig, SortField, SortDirection } from "../utils/sort";
 import { IconPickerModal } from "../ui/IconPickerModal";
 import { CreateListModal } from "../ui/CreateListModal";
-import { getLunarDisplayText, isLunarSpecialDay } from "../utils/lunar";
 import { isEnglish, localizeDom, systemTagName, t } from "../i18n";
 import { LocalAIProvider, AIRecommendation, isSimilar, validateRecommendation } from "../services/AIRecommendationService";
 import { isAllDayTask as isAllDayTaskRule, isVisibleInSchedule as isVisibleInScheduleRule, layoutOverlappingTasks } from "../utils/schedule";
@@ -141,6 +139,8 @@ import { LifePlanRenderer } from "./LifePlanRenderer";
 import { filterTasksByStatus, hideFutureRecurrenceInstances } from "../utils/task-list";
 import type { ReviewStats } from "../services/StatsService";
 import { openPluginSettings } from "../utils/obsidian-settings";
+import { parseNavDragPayload } from "../utils/nav-drag";
+import { reportAsyncError, runAsyncAction } from "../utils/async-action";
 
 export type ViewNav = "myday" | "all" | "inbox" | "plan" | "schedule" | "review" | "trash";
 
@@ -462,16 +462,18 @@ export class TodoView extends ItemView {
     setIcon(this.sortBtnEl, "arrow-up-down");
     this.sortLabelEl = this.sortBtnEl.createSpan({ text: this.getSortLabel(this.plugin.settings.sortConfig.primary.field) });
     this.sortBtnEl.addEventListener("click", (ev) => this.showSortMenu(ev));
-    this.filterBtnEl = taskHeader.createEl("button", { cls: "todo-sort-btn todo-filter-btn" }) as HTMLButtonElement;
+    this.filterBtnEl = taskHeader.createEl("button", { cls: "todo-sort-btn todo-filter-btn" });
     setIcon(this.filterBtnEl, "filter");
     this.filterBtnEl.title = t("状态筛选");
     this.filterBtnEl.setAttribute("aria-label", t("状态筛选"));
     this.filterBtnEl.addEventListener("click", (ev) => this.showStatusFilterMenu(ev));
-    this.aiBtnEl = taskHeader.createEl("button", { cls: "todo-sort-btn todo-ai-btn" }) as HTMLButtonElement;
+    this.aiBtnEl = taskHeader.createEl("button", { cls: "todo-sort-btn todo-ai-btn" });
     setIcon(this.aiBtnEl, "list-checks");
     this.aiBtnEl.addClass("todo-is-hidden");
     this.aiBtnEl.title = t("待办事项推荐");
+    this.aiBtnEl.setAttribute("aria-label", t("待办事项推荐"));
     this.aiBtnEl.addEventListener("click", () => {
+      if (this.plugin.settings.activeViewNav !== "myday" || this.plugin.settings.selectedListId) return;
       const layout = this.containerEl.querySelector(".todo-layout");
       if (layout) layout.addClass("todo-layout-detail-open");
       void this.openAIBar();
@@ -516,9 +518,9 @@ export class TodoView extends ItemView {
       const piIcon = item.createSpan({ cls: "todo-nav-icon" });
       setIcon(piIcon, pi.icon);
       item.createSpan({ cls: "todo-plan-name", text: pi.name });
-      item.addEventListener("click", async () => {
+      item.addEventListener("click", () => { runAsyncAction((async () => {
         await this.activatePlan(pi.kind);
-      });
+      })(), "TodoView interaction"); });
     }
     planHeader.addEventListener("click", () => {
       this.plugin.settings.planGroupCollapsed = !this.plugin.settings.planGroupCollapsed;
@@ -545,7 +547,7 @@ export class TodoView extends ItemView {
       const qdIcon = qItem.createSpan({ cls: "todo-nav-icon" });
       setIcon(qdIcon, qd.icon);
       qItem.createSpan({ cls: "todo-quadrant-name", text: qd.key });
-      qItem.addEventListener("click", async () => {
+      qItem.addEventListener("click", () => { runAsyncAction((async () => {
         this.plugin.settings.selectedQuadrant = qd.key;
         this.plugin.settings.activeViewNav = "all";
         this.plugin.settings.activePlanKind = null;
@@ -560,7 +562,7 @@ export class TodoView extends ItemView {
         await this.renderTasks("all");
         this.updateHeaderInfo();
         this.showMobilePanel("main");
-      });
+      })(), "TodoView interaction"); });
     }
     qHeader.addEventListener("click", () => {
       this.plugin.settings.quadrantGroupCollapsed = !this.plugin.settings.quadrantGroupCollapsed;
@@ -570,9 +572,9 @@ export class TodoView extends ItemView {
 
 
     Object.entries(this.navEls).forEach(([key, el]) => {
-      el.addEventListener("click", async () => {
+      el.addEventListener("click", () => { runAsyncAction((async () => {
         await this.activateNav(key as ViewNav);
-      });
+      })(), "TodoView interaction"); });
     });
 
     this.listNavEl = nav.createDiv({ cls: "todo-nav-section todo-nav-list-section" });
@@ -594,21 +596,21 @@ export class TodoView extends ItemView {
     this.navEls["review"] = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });
     setIcon(this.navEls["review"], "bar-chart-2");
     this.navEls["review"].title = "\u590d\u76d8";
-    this.navEls["review"].addEventListener("click", async () => { await this.activateNav("review"); });
+    this.navEls["review"].addEventListener("click", () => { runAsyncAction((async () => { await this.activateNav("review"); })(), "TodoView interaction"); });
     this.navEls["trash"] = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });
     setIcon(this.navEls["trash"], "trash-2");
     this.navEls["trash"].title = "回收站";
-    this.navEls["trash"].addEventListener("click", async () => { await this.activateNav("trash"); });
+    this.navEls["trash"].addEventListener("click", () => { runAsyncAction((async () => { await this.activateNav("trash"); })(), "TodoView interaction"); });
     const addGroupBtn = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });
     setIcon(addGroupBtn, "folder-plus");
     addGroupBtn.title = "\u65b0\u5efa\u5206\u7ec4";
-    addGroupBtn.addEventListener("click", async () => {
+    addGroupBtn.addEventListener("click", () => { runAsyncAction((async () => {
       const name = await new PromptModal(this.app, "\u8f93\u5165\u5206\u7ec4\u540d\u79f0").openAndGetValue();
       if (name) {
         await this.plugin.groupService.create({ name });
         await this.renderLists();
       }
-    });
+    })(), "TodoView interaction"); });
 
     this.quickInputEl = this.quickContainerEl.createEl("input", { attr: { placeholder: "添加任务..." } });
     this.updateQuickPlaceholder();
@@ -626,12 +628,12 @@ export class TodoView extends ItemView {
         void this.promptQuickCreate();
       }
     });
-    this.quickInputEl.addEventListener("keydown", async (ev) => {
+    this.quickInputEl.addEventListener("keydown", (ev) => { runAsyncAction((async () => {
       if (ev.key === "Enter") {
         ev.preventDefault();
         await this.createTaskFromQuickInput();
       }
-    });
+    })(), "TodoView interaction"); });
 
     this.detailEl = layout.createDiv({ cls: "todo-detail" });
     let detailRoot: HTMLElement = this.detailEl;
@@ -684,20 +686,15 @@ export class TodoView extends ItemView {
   }
 
   private async openAIBar(): Promise<void> {
-    const mode = this.plugin.settings.activeViewNav === "plan" && this.activePlanKind === "month" ? "month" : "myday";
+    if (this.plugin.settings.activeViewNav !== "myday" || this.plugin.settings.selectedListId) return;
     const date = this.myDayViewDate || localTodayStr();
-    const monthKey = this.goalDashboardRenderer.periodKey || currentPeriodKey("month");
     const provider = new LocalAIProvider();
     const accept = async (item: AIRecommendation): Promise<void> => {
       const error = validateRecommendation(item);
       if (error) { new Notice(error); return; }
-      if (mode === "myday" && item.planKind) {
-        new Notice(t("日推荐只能创建普通任务"));
-        return;
-      }
       const itemDate = item.startDate ? extractLocalDate(item.startDate) : item.dueDate ? extractLocalDate(item.dueDate) : null;
       const currentTasks = this.plugin.taskService.getAll();
-      const weeklyGoalId = mode === "myday" && item.parentId &&
+      const weeklyGoalId = item.parentId &&
         currentTasks.some((task) => task.id === item.parentId && task.planKind === "week")
         ? item.parentId
         : undefined;
@@ -705,29 +702,25 @@ export class TodoView extends ItemView {
         task.id !== weeklyGoalId &&
         !task.isDeleted &&
         isSimilar(task.title, item.title) &&
-        (mode === "month" ? task.planPeriodKey === item.planPeriodKey : this.getTaskMyDayDate(task) === itemDate),
+        this.getTaskMyDayDate(task) === itemDate,
       );
       if (duplicate) { new Notice(t("跳过重复或无效项")); return; }
       if (item.sourceTaskId) await this.plugin.taskService.update(item.sourceTaskId, { myDayGroup: item.myDayGroup, startDate: item.startDate, dueDate: item.dueDate });
-      else await this.plugin.taskService.create({ title: item.title, note: item.note, listId: item.listId, tags: item.tags, isImportant: item.isImportant, myDayGroup: item.myDayGroup ?? "allday", startDate: item.startDate ?? null, dueDate: item.dueDate ?? null, planKind: mode === "month" ? item.planKind : undefined, planPeriodKey: mode === "month" ? item.planPeriodKey : undefined, parentId: item.parentId });
+      else await this.plugin.taskService.create({ title: item.title, note: item.note, listId: item.listId, tags: item.tags, isImportant: item.isImportant, myDayGroup: item.myDayGroup ?? "allday", startDate: item.startDate ?? null, dueDate: item.dueDate ?? null, parentId: item.parentId });
       // Refresh the main task area without calling refreshAll(), which closes
       // the active detail/AI sidebar as part of its reset flow.
       await this.refreshAfterAIAccept();
       new Notice(t("已保存"));
     };
     const generate = async (): Promise<AIRecommendation[]> => {
-      const context = { tasks: this.plugin.taskService.getAll(), date, monthKey, intensity: this.plugin.settings.planningIntensity };
-      return mode === "myday" ? provider.recommendMyDay(context) : provider.recommendMonthWeeks(context);
+      return provider.recommendMyDay({ tasks: this.plugin.taskService.getAll(), date, intensity: this.plugin.settings.planningIntensity });
     };
     this.aiView.open([], generate, accept);
-    const tasks = this.plugin.taskService.getAll();
-    if (mode === "month" && !tasks.some((task) => task.planKind === "month" && task.planPeriodKey === monthKey)) {
-      new Notice(t("当前月份没有月度目标，请先创建月度目标"));
-      return;
-    }
     try {
       const items = await generate();
-      this.aiView.open(items, generate, accept);
+      if (this.aiView.isOpen() && this.plugin.settings.activeViewNav === "myday" && !this.plugin.settings.selectedListId) {
+        this.aiView.open(items, generate, accept);
+      }
     } catch (error) {
       console.error(error);
       new Notice(t("推荐生成失败，请稍后重试"));
@@ -735,7 +728,7 @@ export class TodoView extends ItemView {
   }
 
   async onClose(): Promise<void> {
-    if (this.timeLineTimer) { clearInterval(this.timeLineTimer); this.timeLineTimer = null; }
+    if (this.timeLineTimer) { window.clearInterval(this.timeLineTimer); this.timeLineTimer = null; }
     if (this._onDragMove) document.removeEventListener("mousemove", this._onDragMove);
     if (this._onDragEnd) document.removeEventListener("mouseup", this._onDragEnd);
     this.goalDashboardRenderer.dispose();
@@ -821,7 +814,7 @@ export class TodoView extends ItemView {
   private revealMobileDetailSidebar(): void {
     if (!this.isMobileEnvironment() || !this.mobileDetailLeaf) return;
     this.app.workspace.rightSplit.expand();
-    this.app.workspace.revealLeaf(this.mobileDetailLeaf);
+    runAsyncAction(this.app.workspace.revealLeaf(this.mobileDetailLeaf), "reveal task details");
   }
 
   private collapseMobileDetailSidebar(): void {
@@ -974,11 +967,11 @@ export class TodoView extends ItemView {
     this.headerIconEl.toggleClass("editable", isEditable);
     if (isEditable && listId) {
       this.headerIconEl.onclick = () => {
-        new IconPickerModal(this.app, icon, async (iconName) => {
+        new IconPickerModal(this.app, icon, (iconName) => { runAsyncAction((async () => {
           await this.plugin.listService.update(listId, { icon: iconName });
           this.updateHeaderInfo();
           await this.renderLists();
-        }).open();
+        })(), "TodoView interaction"); }).open();
       };
     }
     
@@ -996,14 +989,13 @@ export class TodoView extends ItemView {
     }
 
 
-    // Show AI button for myday, sort/filter buttons for task views
+    // Show task suggestions only in My Day, sort/filter buttons in task views.
     if (this.aiBtnEl && this.sortBtnEl && this.filterBtnEl) {
       const isMyday = activeViewNav === "myday" && !selectedListId;
-      const isMonthlyPlan = activeViewNav === "plan" && this.activePlanKind === "month";
-      const showAi = isMyday || isMonthlyPlan;
       const isTaskView = activeViewNav === "all" || activeViewNav === "inbox" || !!selectedListId;
-      this.aiBtnEl.toggleClass("todo-is-hidden", !showAi);
-      this.aiBtnEl.title = t(isMonthlyPlan ? "周计划推荐" : "待办事项推荐");
+      this.aiBtnEl.toggleClass("todo-is-hidden", !isMyday);
+      this.aiBtnEl.title = t("待办事项推荐");
+      this.aiBtnEl.setAttribute("aria-label", t("待办事项推荐"));
       this.filterBtnEl.toggleClass("todo-is-hidden", !isTaskView);
       this.filterBtnEl.style.marginLeft = isMyday ? "auto" : "4px";
       this.filterBtnEl.title = t("状态筛选");
@@ -1221,13 +1213,13 @@ private async activateNav(nav: ViewNav): Promise<void> {
       });
       this.setupGroupDropTarget(headerEl, group.id);
 
-      headerEl.addEventListener("click", async () => {
+      headerEl.addEventListener("click", () => { runAsyncAction((async () => {
         await this.plugin.groupService.toggleCollapse(group.id);
         arrow.toggleClass("collapsed", !group.isCollapsed);
         const listEl = groupEl.querySelector(".todo-nav-group-list") as HTMLElement;
         if (listEl) listEl.toggleClass("todo-is-hidden", !group.isCollapsed);
         await this.renderLists();
-      });
+      })(), "TodoView interaction"); });
 
       headerEl.addEventListener("contextmenu", (ev) => {
         ev.preventDefault();
@@ -1237,17 +1229,17 @@ private async activateNav(nav: ViewNav): Promise<void> {
       const listEl = groupEl.createDiv({ cls: "todo-nav-group-list" });
       listEl.toggleClass("todo-is-hidden", group.isCollapsed);
       for (const list of groupLists) {
-        this.renderListItem(listEl, list, group.id);
+        this.renderListItem(listEl, list);
       }
       this.setupDropZone(listEl, group.id);
     }
 
     for (const list of ungrouped) {
-      this.renderListItem(this.listItemsEl, list, null);
+      this.renderListItem(this.listItemsEl, list);
     }
   }
 
-  private renderListItem(container: HTMLElement, list: { id: string; name: string; isDefault: boolean; icon?: string }, groupId: string | null): void {
+  private renderListItem(container: HTMLElement, list: { id: string; name: string; isDefault: boolean; icon?: string }): void {
     const row = container.createDiv({ cls: "todo-nav-item todo-list-item" + (this.plugin.settings.selectedListId === list.id ? " active" : "") });
     row.dataset.listId = list.id;
     row.draggable = true;
@@ -1271,11 +1263,11 @@ private async activateNav(nav: ViewNav): Promise<void> {
     });
     this.setupListItemDropTarget(row, list.id);
 
-    row.addEventListener("click", async () => {
+    row.addEventListener("click", () => { runAsyncAction((async () => {
       await this.activateList(list.id);
-    });
+    })(), "TodoView interaction"); });
 
-    renameBtn.addEventListener("click", async (ev) => {
+    renameBtn.addEventListener("click", (ev) => { runAsyncAction((async () => {
       ev.stopPropagation();
       const modal = new CreateListModal(this.app, { name: list.name, icon: list.icon || "list", tags: (this.plugin.listService.getById(list.id)?.tags || []) }, this.plugin.tagService.getAll());
       const result = await modal.openAndGetValue();
@@ -1284,9 +1276,9 @@ private async activateNav(nav: ViewNav): Promise<void> {
       await this.syncListTags(list.id, result.tags);
       await this.renderLists();
       if (this.plugin.settings.selectedListId === list.id) this.updateHeaderInfo();
-    });
+    })(), "TodoView interaction"); });
 
-    deleteBtn.addEventListener("click", async (ev) => {
+    deleteBtn.addEventListener("click", (ev) => { runAsyncAction((async () => {
       ev.stopPropagation();
       if (list.isDefault) {
         new Notice("\u9ed8\u8ba4\u5217\u8868\u4e0d\u53ef\u5220\u9664");
@@ -1308,7 +1300,7 @@ private async activateNav(nav: ViewNav): Promise<void> {
       await this.activateNav("myday");
       }
       await this.renderLists();
-    });
+    })(), "TodoView interaction"); });
 
       }
 
@@ -1317,11 +1309,12 @@ private async activateNav(nav: ViewNav): Promise<void> {
       ev.preventDefault();
       ev.dataTransfer!.dropEffect = "move";
     });
-    el.addEventListener("drop", async (ev) => {
+    el.addEventListener("drop", (ev) => { runAsyncAction((async () => {
       ev.preventDefault();
       this.clearAllDragStyles();
       try {
-        const data = JSON.parse(ev.dataTransfer!.getData("text/plain"));
+        const data = parseNavDragPayload(ev.dataTransfer?.getData("text/plain") ?? "");
+        if (!data) return;
         if (data.type === "list") {
           const allLists = this.plugin.listService.getActive();
           const dragged = allLists.find((l) => l.id === data.id);
@@ -1338,8 +1331,8 @@ private async activateNav(nav: ViewNav): Promise<void> {
           await this.plugin.listService.update(data.id, { sortOrder: targetLists.length });
           await this.renderLists();
         }
-      } catch {}
-    });
+      } catch (error) { reportAsyncError("move list to group", error); }
+    })(), "TodoView interaction"); });
   }
 
   private setupListItemDropTarget(row: HTMLElement, listId: string): void {
@@ -1352,13 +1345,14 @@ private async activateNav(nav: ViewNav): Promise<void> {
     row.addEventListener("dragleave", () => {
       row.removeClass("drag-over");
     });
-    row.addEventListener("drop", async (ev) => {
+    row.addEventListener("drop", (ev) => { runAsyncAction((async () => {
       ev.preventDefault();
       ev.stopPropagation();
       row.removeClass("drag-over");
       this.clearAllDragStyles();
       try {
-        const data = JSON.parse(ev.dataTransfer!.getData("text/plain"));
+        const data = parseNavDragPayload(ev.dataTransfer?.getData("text/plain") ?? "");
+        if (!data) return;
         if (data.type === "list" && data.id !== listId) {
           const allLists = this.plugin.listService.getActive();
           const dragged = allLists.find((l) => l.id === data.id);
@@ -1377,11 +1371,8 @@ private async activateNav(nav: ViewNav): Promise<void> {
           }
           await this.renderLists();
         }
-        if (data.type === "group") {
-          // Group dropped on list - ignore
-        }
-      } catch {}
-    });
+      } catch (error) { reportAsyncError("reorder list", error); }
+    })(), "TodoView interaction"); });
   }
 
   private setupGroupDropTarget(headerEl: HTMLElement, groupId: string): void {
@@ -1394,13 +1385,14 @@ private async activateNav(nav: ViewNav): Promise<void> {
     headerEl.addEventListener("dragleave", () => {
       headerEl.removeClass("drag-over");
     });
-    headerEl.addEventListener("drop", async (ev) => {
+    headerEl.addEventListener("drop", (ev) => { runAsyncAction((async () => {
       ev.preventDefault();
       ev.stopPropagation();
       headerEl.removeClass("drag-over");
       this.clearAllDragStyles();
       try {
-        const data = JSON.parse(ev.dataTransfer!.getData("text/plain"));
+        const data = parseNavDragPayload(ev.dataTransfer?.getData("text/plain") ?? "");
+        if (!data) return;
         if (data.type === "group" && data.id !== groupId) {
           const allGroups = this.plugin.groupService.getAll();
           const dragged = allGroups.find((g) => g.id === data.id);
@@ -1429,8 +1421,8 @@ private async activateNav(nav: ViewNav): Promise<void> {
           await this.plugin.listService.update(data.id, { sortOrder: groupLists.length });
           await this.renderLists();
         }
-      } catch {}
-    });
+      } catch (error) { reportAsyncError("reorder group", error); }
+    })(), "TodoView interaction"); });
   }
 
   private clearAllDragStyles(): void {
@@ -1484,10 +1476,10 @@ private async activateNav(nav: ViewNav): Promise<void> {
     const list = this.plugin.listService.getById(listId);
     const currentIcon = list?.icon || "list";
     menu.addItem((item) => item.setTitle("更改图标").setIcon("image").onClick(() => {
-      new IconPickerModal(this.app, currentIcon, async (iconName) => {
+      new IconPickerModal(this.app, currentIcon, (iconName) => { runAsyncAction((async () => {
         await this.plugin.listService.update(listId, { icon: iconName });
         await this.renderLists();
-      }).open();
+      })(), "TodoView interaction"); }).open();
     }));
     menu.addItem((item) => item.setTitle("\u91cd\u547d\u540d").setIcon("pencil").onClick(async () => {
       const row = this.listItemsEl.querySelector('[data-list-id="' + listId + '"]') as HTMLDivElement;
@@ -1641,7 +1633,7 @@ private async activateNav(nav: ViewNav): Promise<void> {
       const clearBtn = filterTag.createSpan({ cls: "todo-review-filter-tag-clear", text: "✕" });
       clearBtn.addEventListener("click", () => {
         this.reviewFilter = null;
-        this.renderTasks("all");
+        runAsyncAction(this.renderTasks("all"), "clear review filter");
       });
     }
 
@@ -1677,12 +1669,12 @@ private async activateNav(nav: ViewNav): Promise<void> {
       const overdueList = overdueGroup.createDiv({ cls: "todo-overdue-list" });
       overdueList.toggleClass("todo-is-hidden", this.plugin.settings.overdueCollapsed);
       overdue.forEach((task) => this.renderTaskRow(overdueList, task, currentView));
-      overdueHeader.addEventListener("click", async () => {
+      overdueHeader.addEventListener("click", () => { runAsyncAction((async () => {
         this.plugin.settings.overdueCollapsed = !this.plugin.settings.overdueCollapsed;
         overdueList.toggleClass("todo-is-hidden", this.plugin.settings.overdueCollapsed);
         overdueArrow.toggleClass("collapsed", this.plugin.settings.overdueCollapsed);
         await this.plugin.saveSettings();
-      });
+      })(), "TodoView interaction"); });
     }
 
 
@@ -1700,12 +1692,12 @@ private async activateNav(nav: ViewNav): Promise<void> {
 
       completed.forEach((task) => this.renderTaskRow(list, task, currentView));
 
-      header.addEventListener("click", async () => {
+      header.addEventListener("click", () => { runAsyncAction((async () => {
         this.plugin.settings.completedCollapsed = !this.plugin.settings.completedCollapsed;
         await this.plugin.saveSettings();
         list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
         arrow.toggleClass("collapsed", this.plugin.settings.completedCollapsed);
-      });
+      })(), "TodoView interaction"); });
     }
   }
 
@@ -1741,12 +1733,12 @@ private async activateNav(nav: ViewNav): Promise<void> {
           const list = group.createDiv({ cls: "todo-completed-list" });
           list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
           completed.forEach((task) => this.renderTaskRow(list, task, "all"));
-          header.addEventListener("click", async () => {
+          header.addEventListener("click", () => { runAsyncAction((async () => {
             this.plugin.settings.completedCollapsed = !this.plugin.settings.completedCollapsed;
             await this.plugin.saveSettings();
             list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
             arrow.toggleClass("collapsed", this.plugin.settings.completedCollapsed);
-          });
+          })(), "TodoView interaction"); });
         }
       }
       return;
@@ -1796,7 +1788,6 @@ private async activateNav(nav: ViewNav): Promise<void> {
 private async renderMyDayGroups(tasks: Task[]): Promise<void> {
 
     // My Day navigation header
-    const viewDate = this.myDayViewDate || localTodayStr();
     const navHeader = this.taskListEl.createDiv({ cls: "todo-myday-nav" });
     const prevBtn = navHeader.createEl("button", { cls: "todo-myday-nav-btn", text: "\u25c0" });
     const dateLabel = navHeader.createSpan({ cls: "todo-myday-nav-title" });
@@ -1819,24 +1810,24 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       await this.renderMyDayGroups(newTasks);
     };
 
-    prevBtn.addEventListener("click", async () => {
+    prevBtn.addEventListener("click", () => { runAsyncAction((async () => {
       const currentDate = this.myDayViewDate || localTodayStr();
       const d = new Date(+currentDate.split("-")[0], +currentDate.split("-")[1] - 1, +currentDate.split("-")[2]);
       d.setDate(d.getDate() - 1);
       this.myDayViewDate = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
       await refreshMyDay();
-    });
-    nextBtn.addEventListener("click", async () => {
+    })(), "TodoView interaction"); });
+    nextBtn.addEventListener("click", () => { runAsyncAction((async () => {
       const currentDate = this.myDayViewDate || localTodayStr();
       const d = new Date(+currentDate.split("-")[0], +currentDate.split("-")[1] - 1, +currentDate.split("-")[2]);
       d.setDate(d.getDate() + 1);
       this.myDayViewDate = d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
       await refreshMyDay();
-    });
-    todayBtn.addEventListener("click", async () => {
+    })(), "TodoView interaction"); });
+    todayBtn.addEventListener("click", () => { runAsyncAction((async () => {
       this.myDayViewDate = null;
       await refreshMyDay();
-    });
+    })(), "TodoView interaction"); });
 
     // Auto-update myDayGroup based on time for tasks with dates
     for (const t of tasks) {
@@ -1953,8 +1944,6 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     // Build time range string
     const startStr = task.startDate ? formatShortDate(task.startDate) : "";
     const dueStr = task.dueDate ? formatShortDate(task.dueDate) : "";
-    if (startStr || dueStr) {
-      }
     const metaRow = content.createDiv({ cls: "todo-task-meta-row" });
     const metaLeft = metaRow.createDiv({ cls: "todo-task-meta-left" });
     const metaRight = metaRow.createDiv({ cls: "todo-task-meta-right" });
@@ -1993,7 +1982,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     });
     setIcon(star, "star");
 
-    checkbox.addEventListener("click", async (ev) => {
+    checkbox.addEventListener("click", (ev) => { runAsyncAction((async () => {
       ev.stopPropagation();
       if (task.isCompleted) {
         await this.plugin.taskService.uncomplete(task.id);
@@ -2002,16 +1991,16 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       }
       this.refreshDetailIfActive(task.id);
       await this.renderTasks(currentView);
-    });
+    })(), "TodoView interaction"); });
 
-    star.addEventListener("click", async (ev) => {
+    star.addEventListener("click", (ev) => { runAsyncAction((async () => {
       ev.stopPropagation();
       await this.plugin.taskService.update(task.id, { isImportant: !task.isImportant });
       this.refreshDetailIfActive(task.id);
       await this.renderTasks(currentView);
-    });
+    })(), "TodoView interaction"); });
 
-    row.addEventListener("click", async () => {
+    row.addEventListener("click", () => { runAsyncAction((async () => {
       this.detailView.clearHistory();
       this.plugin.settings.selectedTaskId = task.id;
       await this.plugin.saveSettings();
@@ -2019,7 +2008,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       this.highlightSelectedTask(task.id);
       const layout = this.containerEl.querySelector(".todo-layout");
       if (layout) layout.addClass("todo-layout-detail-open");
-    });
+    })(), "TodoView interaction"); });
 
     row.addEventListener("contextmenu", (ev) => {
       ev.preventDefault();
@@ -2080,8 +2069,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     const nameEl = row.querySelector<HTMLElement>(".todo-list-name");
     if (!nameEl) return;
 
-    const input = document.createElement("input");
-    input.className = "todo-list-rename-input";
+    const input = nameEl.createEl("input", { cls: "todo-list-rename-input" });
     input.value = currentName;
     nameEl.replaceWith(input);
     input.focus();
@@ -2109,7 +2097,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
 
   focusQuickInput(): void {
     if (!this.quickInputEl) {
-      this.promptQuickCreate();
+      runAsyncAction(this.promptQuickCreate(), "create quick task");
       return;
     }
 
@@ -2117,7 +2105,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     this.quickInputEl.focus({ preventScroll: true });
 
     if (document.activeElement !== this.quickInputEl) {
-      this.promptQuickCreate();
+      runAsyncAction(this.promptQuickCreate(), "create quick task");
     }
   }
 
@@ -2195,17 +2183,14 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       return;
     }
 
-    this.plugin.taskService
-      .create({
-        title: title.trim(),
-        listId,
-        startDate: activeViewNav === "myday" && !selectedListId ? (this.myDayViewDate || localTodayStr()) + "T07:00:00" : null,
-        dueDate: activeViewNav === "myday" && !selectedListId ? (this.myDayViewDate || localTodayStr()) + "T23:30:00" : null,
-      })
-      .then(async () => {
-        await this.renderLists();
-        await this.renderTasks(selectedListId ? "list" : activeViewNav);
-      });
+    await this.plugin.taskService.create({
+      title: title.trim(),
+      listId,
+      startDate: activeViewNav === "myday" && !selectedListId ? (this.myDayViewDate || localTodayStr()) + "T07:00:00" : null,
+      dueDate: activeViewNav === "myday" && !selectedListId ? (this.myDayViewDate || localTodayStr()) + "T23:30:00" : null,
+    });
+    await this.renderLists();
+    await this.renderTasks(selectedListId ? "list" : activeViewNav);
   }
 
   private async createTaskFromQuickInput(): Promise<void> {
@@ -2330,7 +2315,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     if (task.planKind === "life") return; // life view has no collapsible groups
 
     // Expand the body that directly matches the task's period key
-    const directBody = this.taskListEl?.querySelector(`[data-period-key="${task.planPeriodKey}"]`) as HTMLElement | null;
+    const directBody = this.taskListEl?.querySelector<HTMLElement>(`[data-period-key="${task.planPeriodKey}"]`);
     if (directBody) {
       directBody.removeClass("todo-is-hidden");
       const arrow = directBody.parentElement?.querySelector(".todo-plan-group-arrow");
@@ -2342,7 +2327,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     if (subKind && task.planPeriodKey) {
       const parentKey = getParentPeriodKey(subKind, task.planPeriodKey);
       if (parentKey) {
-        const parentBody = this.taskListEl?.querySelector(`[data-period-key="${parentKey}"]`) as HTMLElement | null;
+    const parentBody = this.taskListEl?.querySelector<HTMLElement>(`[data-period-key="${parentKey}"]`);
         if (parentBody) {
           parentBody.removeClass("todo-is-hidden");
           const parentArrow = parentBody.parentElement?.querySelector(".todo-plan-group-arrow");
@@ -2354,7 +2339,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
 
   /** Scroll a task row into the visible area of the task list */
   scrollTaskIntoView(taskId: string): void {
-    const el = this.taskListEl?.querySelector(`[data-task-id="${taskId}"]`) as HTMLElement | null;
+    const el = this.taskListEl?.querySelector<HTMLElement>(`[data-task-id="${taskId}"]`);
     if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
   }
 
@@ -2556,13 +2541,13 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     desc.createSpan({ text: t("\u5df2\u5220\u9664\u7684\u4efb\u52a1\u5c06\u4fdd\u7559 30 \u5929\uff0c\u4e4b\u540e\u81ea\u52a8\u6e05\u7406") });
 
     const emptyBtn = header.createEl("button", { text: t("\u6e05\u7a7a\u56de\u6536\u7ad9"), cls: "todo-trash-btn todo-trash-btn-danger todo-trash-header-btn" });
-    emptyBtn.addEventListener("click", async () => {
+    emptyBtn.addEventListener("click", () => { runAsyncAction((async () => {
       const confirmed = await new ConfirmModal(this.app, t("确定永久删除回收站中的任务吗？此操作不可撤销。") + " (" + deletedTasks.length + t("个任务") + ")").openAndConfirm();
       if (confirmed) {
         await this.plugin.taskService.emptyTrash();
         this.renderTrashView();
       }
-    });
+    })(), "TodoView interaction"); });
 
 
     const deletedTasks = this.plugin.taskService.getDeleted();
@@ -2589,23 +2574,23 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
 
       const actions = row.createDiv({ cls: "todo-trash-item-actions" });
       const restoreBtn = actions.createEl("button", { text: t("恢复"), cls: "todo-trash-btn" });
-      restoreBtn.addEventListener("click", async () => {
+      restoreBtn.addEventListener("click", () => { runAsyncAction((async () => {
         await this.plugin.taskService.restore(task.id);
         this.renderTrashView();
-      });
+      })(), "TodoView interaction"); });
       const deleteBtn = actions.createEl("button", { text: t("彻底删除"), cls: "todo-trash-btn todo-trash-btn-danger" });
-      deleteBtn.addEventListener("click", async () => {
+      deleteBtn.addEventListener("click", () => { runAsyncAction((async () => {
         const confirmed = await new ConfirmModal(this.app, t("确定永久删除吗？此操作不可撤销。") + " " + (task.title || t("未命名任务"))).openAndConfirm();
         if (confirmed) {
           await this.plugin.taskService.hardDelete(task.id);
           this.renderTrashView();
         }
-      });
+      })(), "TodoView interaction"); });
     }
 
   }
   private renderScheduleView(): void {
-    if (this.timeLineTimer) { clearInterval(this.timeLineTimer); this.timeLineTimer = null; }
+    if (this.timeLineTimer) { window.clearInterval(this.timeLineTimer); this.timeLineTimer = null; }
     const container = this.taskListEl;
     container.empty();
     const wrap = container.createDiv({ cls: "todo-schedule-container" });
@@ -2651,7 +2636,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
         cls: "todo-schedule-mode-btn" + (m === this.scheduleMode ? " active" : ""),
         text: modeLabels[m],
       });
-      btn.addEventListener("click", async () => {
+      btn.addEventListener("click", () => { runAsyncAction((async () => {
         this.scheduleMode = m;
         this.plugin.settings.activeScheduleMode = m;
         await this.plugin.saveSettings();
@@ -2661,7 +2646,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
         this.scheduleScrollTarget = "now";
         this.renderScheduleContent(contentEl);
         this.refreshScheduleSidebarIfOpen();
-      });
+      })(), "TodoView interaction"); });
     }
 
     const contentEl = wrap.createDiv({ cls: "todo-schedule-content" });
@@ -2669,7 +2654,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   }
 
   private renderScheduleContent(container: HTMLDivElement): void {
-    if (this.timeLineTimer) { clearInterval(this.timeLineTimer); this.timeLineTimer = null; }
+    if (this.timeLineTimer) { window.clearInterval(this.timeLineTimer); this.timeLineTimer = null; }
     container.empty();
     switch (this.scheduleMode) {
       case "month":
@@ -2727,7 +2712,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       const hourHeight = 60;
 
       // Cross-day detection for week view
-      const columnsEl = container.closest(".todo-week-columns") as HTMLElement | null;
+    const columnsEl = container.closest<HTMLElement>(".todo-week-columns");
       const colCount = columnsEl ? columnsEl.children.length : 1;
       const columnsRect = columnsEl ? columnsEl.getBoundingClientRect() : null;
       const dateStrs: string[] = [];
@@ -2735,7 +2720,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       if (columnsEl) {
         for (let ci = 0; ci < columnsEl.children.length; ci++) {
           const cEl = columnsEl.children[ci] as HTMLElement;
-          const firstCard = cEl.querySelector("[data-date-str]") as HTMLElement | null;
+    const firstCard = cEl.querySelector<HTMLElement>("[data-date-str]");
           if (firstCard) dateStrs.push(firstCard.dataset.dateStr!);
           else {
             // Derive date from weekStart offset
@@ -2774,8 +2759,8 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
 
       // Find scroll container for auto-scroll
       const scrollContainer = columnsEl
-        ? container.closest(".todo-schedule-week-grid") as HTMLElement | null
-        : container.closest(".todo-time-grid") as HTMLElement | null;
+      ? container.closest<HTMLElement>(".todo-schedule-week-grid")
+      : container.closest<HTMLElement>(".todo-time-grid");
       this.dragState = {
         type: isResize ? "resize" : "move",
         taskId: task.id,
@@ -2833,7 +2818,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   }
 
   private startWeekAllDayDrag(event: MouseEvent, task: Task, card: HTMLElement, grid: HTMLDivElement, weekStart: Date, columnIndex: number): void {
-    const columnsEl = grid.querySelector(".todo-week-columns") as HTMLElement | null;
+    const columnsEl = grid.querySelector<HTMLElement>(".todo-week-columns");
     const ghostParent = columnsEl || grid;
     const ghost = ghostParent.createDiv({ cls: "todo-drag-ghost todo-drag-ghost-week" });
     const colCount = 7;
@@ -3330,10 +3315,8 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       const item = Array.from(menu.querySelectorAll<HTMLElement>(".menu-item")).find((candidate) => candidate.textContent?.includes(moveLabel));
       if (!item) return;
 
-      const submenu = document.createElement("div");
-      submenu.className = "todo-list-submenu";
+      const submenu = document.body.createDiv({ cls: "todo-list-submenu" });
       submenu.setAttribute("role", "menu");
-      document.body.appendChild(submenu);
       let hideTimer: number | null = null;
       const hide = () => {
         if (hideTimer !== null) window.clearTimeout(hideTimer);
@@ -3357,21 +3340,15 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       submenu.addEventListener("mouseleave", hide);
 
       for (const key of this.getPlanMoveOptions(task)) {
-        const button = document.createElement("div");
-        button.className = "todo-list-submenu-item";
-        const icon = document.createElement("div");
-        icon.className = "todo-list-submenu-item-icon";
+        const button = submenu.createDiv({ cls: "todo-list-submenu-item" });
+        const icon = button.createDiv({ cls: "todo-list-submenu-item-icon" });
         setIcon(icon, task.planKind === "quarter" ? "calendar" : "calendar-days");
-        const label = document.createElement("div");
-        label.className = "todo-list-submenu-item-label";
-        label.textContent = task.planKind === "quarter" ? this.localizedSubGroupLabel("quarter", key) : this.localizedSubGroupLabel("week", key);
-        button.append(icon, label);
-        button.addEventListener("click", async () => {
+        button.createDiv({ cls: "todo-list-submenu-item-label", text: task.planKind === "quarter" ? this.localizedSubGroupLabel("quarter", key) : this.localizedSubGroupLabel("week", key) });
+        button.addEventListener("click", () => { runAsyncAction((async () => {
           await this.movePlanTask(task, key, currentView);
           submenu.remove();
           menu.remove();
-        });
-        submenu.appendChild(button);
+        })(), "TodoView interaction"); });
       }
     }, 0);
   }
@@ -3384,10 +3361,8 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       const item = Array.from(menu.querySelectorAll<HTMLElement>(".menu-item")).find((candidate) => candidate.textContent?.includes(t("移动到列表...")));
       if (!item) return;
 
-      const submenu = document.createElement("div");
-      submenu.className = "todo-list-submenu";
+      const submenu = document.body.createDiv({ cls: "todo-list-submenu" });
       submenu.setAttribute("role", "menu");
-      document.body.appendChild(submenu);
       let hideTimer: number | null = null;
       const hide = () => {
         if (hideTimer !== null) window.clearTimeout(hideTimer);
@@ -3413,23 +3388,17 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       submenu.addEventListener("mouseleave", hide);
 
       const addList = (list: { id: string; name: string; isDefault: boolean; icon: string }): void => {
-        const button = document.createElement("div");
-        button.className = "todo-list-submenu-item";
-        const icon = document.createElement("div");
-        icon.className = "todo-list-submenu-item-icon";
+        const button = submenu.createDiv({ cls: "todo-list-submenu-item" });
+        const icon = button.createDiv({ cls: "todo-list-submenu-item-icon" });
         setIcon(icon, list.icon || "list");
-        const label = document.createElement("div");
-        label.className = "todo-list-submenu-item-label";
-        label.textContent = list.isDefault ? "移动到任务" : list.name;
-        button.append(icon, label);
-        button.addEventListener("click", async () => {
+        button.createDiv({ cls: "todo-list-submenu-item-label", text: list.isDefault ? "移动到任务" : list.name });
+        button.addEventListener("click", () => { runAsyncAction((async () => {
           await this.plugin.taskService.update(task.id, { listId: list.id });
           submenu.remove();
           menu.remove();
           await this.renderLists();
           await this.renderTasks(currentView);
-        });
-        submenu.appendChild(button);
+        })(), "TodoView interaction"); });
       };
       const groups = this.plugin.groupService.getAll();
       const grouped = new Map<string | null, typeof lists>();
@@ -3438,10 +3407,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
         grouped.set(key, [...(grouped.get(key) || []), list]);
       }
       const addLabel = (label: string): void => {
-        const el = document.createElement("div");
-        el.className = "todo-list-submenu-label";
-        el.textContent = label;
-        submenu.appendChild(el);
+        submenu.createDiv({ cls: "todo-list-submenu-label", text: label });
       };
       const addGroup = (items: typeof lists): void => items.sort((a, b) => a.name.localeCompare(b.name)).forEach(addList);
       const defaults = grouped.get("__default__") || [];
@@ -3506,10 +3472,8 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       const item = Array.from(menu.querySelectorAll<HTMLElement>(".menu-item")).find((candidate) => candidate.textContent?.includes(t("添加到我的计划")));
       if (!item) return;
 
-      const submenu = document.createElement("div");
-      submenu.className = "todo-list-submenu";
+      const submenu = document.body.createDiv({ cls: "todo-list-submenu" });
       submenu.setAttribute("role", "menu");
-      document.body.appendChild(submenu);
       let hideTimer: number | null = null;
       const hide = () => {
         if (hideTimer !== null) window.clearTimeout(hideTimer);
@@ -3533,21 +3497,15 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       submenu.addEventListener("mouseleave", hide);
 
       for (const option of this.getPlanTargetOptions()) {
-        const button = document.createElement("div");
-        button.className = "todo-list-submenu-item";
-        const icon = document.createElement("div");
-        icon.className = "todo-list-submenu-item-icon";
+        const button = submenu.createDiv({ cls: "todo-list-submenu-item" });
+        const icon = button.createDiv({ cls: "todo-list-submenu-item-icon" });
         setIcon(icon, option.icon);
-        const label = document.createElement("div");
-        label.className = "todo-list-submenu-item-label";
-        label.textContent = option.label;
-        button.append(icon, label);
-        button.addEventListener("click", async () => {
+        button.createDiv({ cls: "todo-list-submenu-item-label", text: option.label });
+        button.addEventListener("click", () => { runAsyncAction((async () => {
           await this.addTaskToPlan(task, option.kind, currentView);
           submenu.remove();
           menu.remove();
-        });
-        submenu.appendChild(button);
+        })(), "TodoView interaction"); });
       }
     }, 0);
   }
@@ -3668,7 +3626,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
         cls: "todo-review-mode-btn" + (m === this.reviewMode ? " active" : ""),
         text: modeLabels[m],
       });
-      btn.addEventListener("click", async () => {
+      btn.addEventListener("click", () => { runAsyncAction((async () => {
         this.reviewMode = m;
         this.plugin.settings.activeReviewMode = m;
         await this.plugin.saveSettings();
@@ -3676,7 +3634,7 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
         btn.addClass("active");
         titleEl.textContent = this.getReviewTitle();
         this.renderReviewContent(contentEl);
-      });
+      })(), "TodoView interaction"); });
     }
 
     const contentEl = wrap.createDiv({ cls: "todo-review-content" });

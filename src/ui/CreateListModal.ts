@@ -66,7 +66,7 @@ export class CreateListModal extends Modal {
     this.nameInput = nameGroup.createEl("input", {
       cls: "todo-create-list-input",
       attr: { type: "text", placeholder: t("输入列表名称...") },
-    }) as HTMLInputElement;
+    });
     if (this.editName) this.nameInput.value = this.editName;
 
     // Icon selector
@@ -83,7 +83,7 @@ export class CreateListModal extends Modal {
     const searchInput = iconGroup.createEl("input", {
       cls: "todo-create-list-search",
       attr: { type: "text", placeholder: t("搜索图标...") },
-    }) as HTMLInputElement;
+    });
 
     // Icon grid
     const gridEl = iconGroup.createDiv({ cls: "todo-create-list-icon-grid" });

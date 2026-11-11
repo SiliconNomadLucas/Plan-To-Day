@@ -62,7 +62,7 @@ export function createTask(overrides: Partial<Task> = {}): Task {
     isRecurrenceTemplate: false,
     isRecurrenceSource: false,
     recurrenceEndDate: null,
-    status: "active" as TaskStatus,
+    status: "active",
     ...overrides,
   };
 }

@@ -76,7 +76,7 @@ export class NoteEditModal extends Modal {
   onOpen(): void {
     this.contentEl.addClass('todo-note-edit-modal');
     this.contentEl.createDiv({ cls: 'todo-rec-title', text: '编辑备注' });
-    const ta = this.contentEl.createEl('textarea', { cls: 'todo-note-edit-textarea' }) as HTMLTextAreaElement;
+    const ta = this.contentEl.createEl('textarea', { cls: 'todo-note-edit-textarea' });
     ta.value = this.note;
     ta.rows = 8;
     ta.addEventListener('input', () => { this.note = ta.value; });

@@ -1,6 +1,6 @@
-import type { Task, MyDayGroup, PlanKind } from "../models/Task";
+import type { Task, MyDayGroup } from "../models/Task";
 import { extractLocalDate } from "../utils/recurrence";
-import { getISOWeekRange, getPeriodKeyForDate, getSubPeriodKeysForParent } from "../utils/period";
+import { getPeriodKeyForDate } from "../utils/period";
 
 export type PlanningIntensity = "light" | "balanced" | "high";
 
@@ -15,11 +15,7 @@ export interface AIRecommendation {
   myDayGroup?: MyDayGroup;
   startDate?: string | null;
   dueDate?: string | null;
-  planKind?: PlanKind;
-  planPeriodKey?: string;
   parentId?: string;
-  weekStart?: string;
-  weekEnd?: string;
   sourceTaskId?: string;
   reason?: string;
   warning?: string;
@@ -28,19 +24,17 @@ export interface AIRecommendation {
 export interface RecommendationContext {
   tasks: Task[];
   date?: string;
-  monthKey?: string;
   intensity: PlanningIntensity;
 }
 
 export interface AIProvider {
   recommendMyDay(context: RecommendationContext): Promise<AIRecommendation[]>;
-  recommendMonthWeeks(context: RecommendationContext): Promise<AIRecommendation[]>;
 }
 
-const CAPACITY: Record<PlanningIntensity, { day: number; week: number }> = {
-  light: { day: 240, week: 1200 },
-  balanced: { day: 360, week: 1800 },
-  high: { day: 480, week: 2400 },
+const CAPACITY: Record<PlanningIntensity, number> = {
+  light: 240,
+  balanced: 360,
+  high: 480,
 };
 
 function normalize(value: string): string {
@@ -89,7 +83,7 @@ export class LocalAIProvider implements AIProvider {
     const current = context.tasks.filter((task) => !task.isDeleted && !task.isCompleted);
     const taskDate = (task: Task): string | null => task.dueDate ? extractLocalDate(task.dueDate) : task.startDate ? extractLocalDate(task.startDate) : null;
     const existing = current.filter((task) => !task.planKind && taskDate(task) === date);
-    const capacity = CAPACITY[context.intensity].day;
+    const capacity = CAPACITY[context.intensity];
     let used = existing.reduce((sum, task) => sum + estimateDuration(task), 0);
     const result: AIRecommendation[] = [];
     const weeklyGoals = current.filter((task) =>
@@ -142,38 +136,11 @@ export class LocalAIProvider implements AIProvider {
     return result;
   }
 
-  async recommendMonthWeeks(context: RecommendationContext): Promise<AIRecommendation[]> {
-    if (!context.monthKey) return [];
-    const monthGoals = context.tasks.filter((task) => task.planKind === "month" && task.planPeriodKey === context.monthKey && !task.isDeleted);
-    if (!monthGoals.length) return [];
-    const weekKeys = getSubPeriodKeysForParent("month", context.monthKey);
-    const result: AIRecommendation[] = [];
-    const existingWeeks = context.tasks.filter((task) => task.planKind === "week" && !task.isDeleted);
-    const max = Math.min(5, weekKeys.length);
-    for (let i = 0; i < max; i++) {
-      const weekKey = weekKeys[i];
-      const goal = monthGoals[i % monthGoals.length];
-      const rangeParts = weekKey.split("-W");
-      const range = getISOWeekRange(Number(rangeParts[0]), Number(rangeParts[1]));
-      const start = toDateOnly(range.start);
-      const end = toDateOnly(range.end);
-      const title = `${goal.title} · 第${i + 1}周行动`;
-      const duplicate = existingWeeks.some((task) => task.planPeriodKey === weekKey && isSimilar(task.title, title));
-      if (duplicate) continue;
-      result.push({
-        id: crypto.randomUUID(), title, note: `围绕月度目标“${goal.title}”推进本周关键行动。`, listId: goal.listId,
-        tags: [...goal.tags], isImportant: goal.isImportant, durationMinutes: 300, planKind: "week", planPeriodKey: weekKey,
-        weekStart: start, weekEnd: end, parentId: goal.id, reason: "按周次、前置顺序和容量均衡拆分",
-      });
-    }
-    return result;
-  }
 }
 
 export function validateRecommendation(item: AIRecommendation): string | null {
   if (!item.title.trim()) return "任务标题不能为空";
   if (item.durationMinutes <= 0 || item.durationMinutes > 1440) return "任务时长不合法";
-  if (item.planKind === "week" && (!item.planPeriodKey || !item.weekStart || !item.weekEnd)) return "周任务缺少周期信息";
   for (const value of [item.startDate, item.dueDate]) {
     if (value && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(value)) return "日期格式不合法";
   }

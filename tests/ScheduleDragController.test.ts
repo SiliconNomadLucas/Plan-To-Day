@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ScheduleDragController,
   type ScheduleDragState,
@@ -76,8 +76,17 @@ function mouseEvent(clientX: number, clientY: number): MouseEvent {
 }
 
 describe("ScheduleDragController", () => {
+  beforeEach(() => {
+    vi.stubGlobal("window", {
+      setTimeout: globalThis.setTimeout,
+      requestAnimationFrame: vi.fn(() => 17),
+      cancelAnimationFrame: vi.fn(),
+    });
+  });
+
   afterEach(() => {
     vi.useRealTimers();
+    vi.unstubAllGlobals();
   });
 
   it("moves a timed task on a 15-minute grid and focuses it after rerender", async () => {

@@ -23,6 +23,7 @@ import type { ViewNav } from "./src/views/TodoView";
 import type { PlanKind } from "./src/models/Task";
 import { OnboardingModal } from "./src/ui/OnboardingModal";
 import { loadLegacySettings } from "./src/utils/legacy-settings";
+import { isRecord } from "./src/utils/validation";
 
 export default class ObsidianTodoPlugin extends Plugin {
   settings: ObsidianTodoSettings;
@@ -98,7 +99,7 @@ export default class ObsidianTodoPlugin extends Plugin {
         const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO);
         const view = leaves[0]?.view;
         if (view instanceof TodoView) {
-          view.promptQuickCreate();
+          await view.promptQuickCreate();
         }
       },
     });
@@ -208,7 +209,7 @@ export default class ObsidianTodoPlugin extends Plugin {
   async activateView(): Promise<void> {
     const existing = this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO);
     if (existing.length) {
-      this.app.workspace.revealLeaf(existing[0]);
+      await this.app.workspace.revealLeaf(existing[0]);
       return;
     }
 
@@ -218,11 +219,15 @@ export default class ObsidianTodoPlugin extends Plugin {
     }
 
     await leaf.setViewState({ type: VIEW_TYPE_TODO, active: true });
-    this.app.workspace.revealLeaf(leaf);
+    await this.app.workspace.revealLeaf(leaf);
   }
 
   async loadSettings(): Promise<void> {
-    const savedSettings = await this.loadData();
+    const rawSettings: unknown = await this.loadData();
+    if (rawSettings !== null && rawSettings !== undefined && !isRecord(rawSettings)) {
+      throw new Error("Invalid plugin settings: expected an object");
+    }
+    const savedSettings = isRecord(rawSettings) ? rawSettings : null;
     const hasSavedSettings = savedSettings && Object.keys(savedSettings).length > 0;
     const legacySettings = hasSavedSettings
       ? null
@@ -238,7 +243,8 @@ export default class ObsidianTodoPlugin extends Plugin {
       };
       await this.saveSettings();
     }
-    logger.setLevel(LogLevel[this.settings.logLevel as keyof typeof LogLevel]);
+    const levels: Record<string, LogLevel> = { DEBUG: LogLevel.DEBUG, INFO: LogLevel.INFO, WARN: LogLevel.WARN, ERROR: LogLevel.ERROR };
+    logger.setLevel(levels[this.settings.logLevel] ?? LogLevel.INFO);
   }
 
   async saveSettings(): Promise<void> {

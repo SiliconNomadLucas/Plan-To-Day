@@ -6,6 +6,7 @@ import {
   periodKeySort,
 } from "../utils/period";
 import { isEnglish } from "../i18n";
+import { runAsyncAction } from "../utils/async-action";
 import {
   localizedPeriodLabel,
   localizedSubGroupLabel,
@@ -136,8 +137,7 @@ export class PlanGroupRenderer {
         body.parentElement?.querySelector(".todo-plan-group-arrow")?.removeClass("collapsed");
       }
       if (body.querySelector(".todo-plan-inline-input")) return;
-      const row = document.createElement("div");
-      row.className = "todo-plan-inline-input";
+      const row = body.createDiv({ cls: "todo-plan-inline-input" });
       const tasks = body.querySelectorAll(".todo-plan-group-body > .todo-task-item");
       const lastTask = tasks.length > 0 ? tasks[tasks.length - 1] : null;
       if (lastTask) lastTask.after(row);
@@ -156,10 +156,10 @@ export class PlanGroupRenderer {
           row.remove();
         }
       };
-      input.addEventListener("keydown", async (event) => {
+      input.addEventListener("keydown", (event) => { runAsyncAction((async () => {
         if (event.key === "Enter") { event.preventDefault(); await save(); }
         if (event.key === "Escape") { event.preventDefault(); saved = true; row.remove(); }
-      });
+      })(), "PlanGroupRenderer interaction"); });
       input.addEventListener("blur", () => { void save(); });
     });
   }

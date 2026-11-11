@@ -84,12 +84,6 @@ export class StatsService {
     const active = this.getActiveTasks();
     const today = this.localToday();
     const overdue = this.getOverdueTasks(today);
-    const myDayTasks = this.taskService.getAll().filter(t =>
-      this.isIncludedInStats(t) &&
-      (t.dueDate ? extractLocalDate(t.dueDate) : t.startDate ? extractLocalDate(t.startDate) : null) === date,
-    );
-    const myDayCompleted = myDayTasks.filter(t => t.isCompleted && t.completedAt && extractLocalDate(t.completedAt) === date).length;
-
     const completedCount = completed.length;
     const createdCount = allInPeriod.filter(t => extractLocalDate(t.createdAt) === date).length;
     const denom = completedCount + active.length;
@@ -234,7 +228,7 @@ export class StatsService {
     const quadrantDist: Record<string, number> = {};
     const domainDist: Record<string, number> = {};
     const listDist: Record<string, number> = {};
-    const hourlyDist: number[] = Array(24).fill(0);
+    const hourlyDist: number[] = Array.from({ length: 24 }, () => 0);
     for (const task of completed) {
       const qTag = task.tags.find(tid => { const tag = this.tagService.getById(tid); return tag && tag.sortOrder < 4; });
       const qName = qTag ? (this.tagService.getById(qTag)?.name ?? "\u672a\u5206\u7c7b") : "\u672a\u5206\u7c7b";

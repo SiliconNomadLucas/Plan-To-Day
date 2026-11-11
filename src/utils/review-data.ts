@@ -76,7 +76,7 @@ export function buildWeeklyReviewTrend(
     groups.set(key, current);
   }
 
-  return [...groups.entries()].map(([key, value]) => ({
+  return [...groups.values()].map((value) => ({
     label: english ? `Week ${value.week}` : `第${value.week}周`,
     completed: value.completed,
     uncompleted: value.uncompleted,

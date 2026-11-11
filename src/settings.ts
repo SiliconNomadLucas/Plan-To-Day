@@ -1,4 +1,4 @@
-import { App, Modal, Notice, PluginSettingTab, setIcon, Setting } from "obsidian";
+import { App, Modal, PluginSettingTab, setIcon, Setting } from "obsidian";
 import type ObsidianTodoPlugin from "../main";
 import type { ViewNav } from "./views/TodoView";
 import type { PlanKind } from "./models/Task";
@@ -6,6 +6,7 @@ import { logger, LogLevel } from "./utils/logger";
 import type { SortConfig } from "./utils/sort";
 import { isEnglish, localizeDom, setLanguage, systemTagName, t, type TodoLanguage } from "./i18n";
 import { OnboardingModal } from "./ui/OnboardingModal";
+import { runAsyncAction } from "./utils/async-action";
 
 export interface ObsidianTodoSettings {
   language: TodoLanguage;
@@ -132,12 +133,12 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
         .setDesc(t("用于人生计划视图计算年龄（格式：YYYY-MM-DD）"));
       const birthdayInput = birthdaySetting.controlEl.createEl("input", {
         attr: { type: "date" },
-      }) as HTMLInputElement;
+      });
       birthdayInput.value = this.plugin.settings.birthday || "";
-      birthdayInput.addEventListener("change", async () => {
+      birthdayInput.addEventListener("change", () => { runAsyncAction((async () => {
         this.plugin.settings.birthday = birthdayInput.value;
         await this.plugin.saveSettings();
-      });
+      })(), "settings interaction"); });
 
       new Setting(group)
         .setName(t("新手引导"))
@@ -262,7 +263,7 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
             .onClick(async () => {
               const confirmed = await new ConfirmModal(this.app, "即将删除 " + stats.total + " 个任务，此操作不可撤销。确认清空吗？").openAndConfirm();
               if (confirmed) {
-                const count = await this.plugin.taskService.clearAll();
+                await this.plugin.taskService.clearAll();
                 this.display();
                 try { await this.plugin.refreshView(); } catch(e) { logger.error("refreshView failed:", e); }
               }
@@ -303,12 +304,12 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
     const group = container.createDiv({ cls: "todo-setting-tag-group" + (editable ? "" : " todo-setting-tag-preset") });
     const titleRow = group.createDiv({ cls: "todo-setting-tag-title-row" });
     const titleLeft = titleRow.createDiv({ cls: "todo-setting-tag-title-left" });
-    titleLeft.createEl("span", { text: title, cls: "todo-setting-tag-group-title" });
-    titleLeft.createEl("span", { text: "(" + tags.length + ")", cls: "todo-setting-tag-group-count" });
+    titleLeft.createSpan({ text: title, cls: "todo-setting-tag-group-title" });
+    titleLeft.createSpan({ text: "(" + tags.length + ")", cls: "todo-setting-tag-group-count" });
     if (editable) {
       const addBtn = titleRow.createEl("button", { text: `+ ${t("添加")}`, cls: "todo-setting-tag-add-btn" });
       addBtn.addEventListener("click", () => {
-        new TagEditModal(this.app, null, async (result) => {
+        new TagEditModal(this.app, null, (result) => { runAsyncAction((async () => {
           await this.plugin.tagService.create({
             name: result.name,
             icon: result.icon,
@@ -317,7 +318,7 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
             isDefault: false,
           });
           this.display();
-        }).open();
+        })(), "settings interaction"); }).open();
       });
     }
     if (desc) {
@@ -343,23 +344,23 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
         const actions = item.createDiv({ cls: "todo-setting-tag-actions" });
         const editBtn = actions.createEl("button", { text: t("编辑"), cls: "todo-setting-tag-btn" });
         editBtn.addEventListener("click", () => {
-          new TagEditModal(this.app, tag, async (result) => {
+          new TagEditModal(this.app, tag, (result) => { runAsyncAction((async () => {
             await this.plugin.tagService.update(tag.id, {
               name: result.name,
               icon: result.icon,
               color: result.color,
             });
             this.display();
-          }).open();
+          })(), "settings interaction"); }).open();
         });
         const delBtn = actions.createEl("button", { text: t("删除"), cls: "todo-setting-tag-btn mod-warning" });
-        delBtn.addEventListener("click", async () => {
+        delBtn.addEventListener("click", () => { runAsyncAction((async () => {
           const confirmed = await new ConfirmModal(this.app, "确定删除标签「" + tag.name + "」吗？").openAndConfirm();
           if (confirmed) {
             await this.plugin.tagService.delete(tag.id);
             this.display();
           }
-        });
+        })(), "settings interaction"); });
       }
     }
   }
@@ -413,7 +414,7 @@ class TagEditModal extends Modal {
     // Name
     const nameRow = this.contentEl.createDiv({ cls: "todo-tag-edit-row" });
     nameRow.createEl("label", { text: t("名称") });
-    this.nameInput = nameRow.createEl("input", { attr: { type: "text", placeholder: t("标签名称") } }) as HTMLInputElement;
+    this.nameInput = nameRow.createEl("input", { attr: { type: "text", placeholder: t("标签名称") } });
     this.nameInput.value = this.tag?.name || "";
 
     // Icon
@@ -447,7 +448,7 @@ class TagEditModal extends Modal {
     // Color
     const colorRow = this.contentEl.createDiv({ cls: "todo-tag-edit-row" });
     colorRow.createEl("label", { text: t("颜色") });
-    this.colorInput = colorRow.createEl("input", { attr: { type: "color" } }) as HTMLInputElement;
+    this.colorInput = colorRow.createEl("input", { attr: { type: "color" } });
     this.colorInput.value = this.tag?.color || "#6B7280";
 
     // Actions

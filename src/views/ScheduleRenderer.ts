@@ -5,6 +5,7 @@ import { getLunarDisplayText, isLunarSpecialDay } from "../utils/lunar";
 import { isEnglish } from "../i18n";
 import { setIcon } from "obsidian";
 import { layoutOverlappingTasks } from "../utils/schedule";
+import { runAsyncAction } from "../utils/async-action";
 
 export interface ScheduleDateState {
   year: number;
@@ -80,7 +81,7 @@ export class ScheduleRenderer {
       .filter((task) => this.callbacks.isVisibleInSchedule(task, "month") && task.dueDate);
     for (const task of tasks) {
       const taskDate = extractLocalDate(task.dueDate!);
-      const target = grid.querySelector(`[data-date-str="${taskDate}"] .todo-schedule-cell-tasks`) as HTMLElement | null;
+    const target = grid.querySelector<HTMLElement>(`[data-date-str="${taskDate}"] .todo-schedule-cell-tasks`);
       if (!target) continue;
       const color = this.callbacks.getTaskBlockColor(task);
       const card = target.createDiv({ cls: "todo-month-task-card" + (task.isCompleted ? " todo-schedule-completed" : "") });
@@ -155,7 +156,7 @@ export class ScheduleRenderer {
       card.style.left = `calc(${width * placement.col}% + ${placement.col * 3}px)`;
     }
 
-    eventsContainer.addEventListener("click", async (event) => {
+    eventsContainer.addEventListener("click", (event) => { runAsyncAction((async () => {
       if (this.callbacks.isDragging() || this.callbacks.wasLastDragMoved() || event.target !== eventsContainer) return;
       const rect = eventsContainer.getBoundingClientRect();
       const startMinute = this.callbacks.snapMinute(rect ? event.clientY - rect.top + gridEl.scrollTop : 0, hourHeight);
@@ -171,7 +172,7 @@ export class ScheduleRenderer {
         dueDate: this.callbacks.minuteToIso(dateStr, endMinute),
       });
       this.callbacks.rerender();
-    });
+    })(), "ScheduleRenderer interaction"); });
 
     this.callbacks.renderTimeline(gridEl);
     const scrollTarget = this.callbacks.getScrollTarget();
@@ -273,7 +274,7 @@ export class ScheduleRenderer {
         card.style.width = `calc(${width}% - 3px)`;
         card.style.left = `calc(${width * placement.col}% + ${placement.col * 3}px)`;
       }
-      column.addEventListener("click", async (event) => {
+      column.addEventListener("click", (event) => { runAsyncAction((async () => {
         if (this.callbacks.isDragging() || this.callbacks.wasLastDragMoved() || event.target !== column) return;
         const rect = column.getBoundingClientRect();
         const startMinute = this.callbacks.snapMinute(event.clientY - rect.top, hourHeight);
@@ -288,7 +289,7 @@ export class ScheduleRenderer {
           dueDate: this.callbacks.minuteToIso(dateStr, Math.min(1440, startMinute + 60)),
         });
         this.callbacks.rerender();
-      });
+      })(), "ScheduleRenderer interaction"); });
     }
 
     this.callbacks.renderTimeline(body);

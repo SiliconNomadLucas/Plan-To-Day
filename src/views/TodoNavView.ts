@@ -4,6 +4,7 @@ import type { ViewNav } from "./TodoView";
 import type { PlanKind } from "../models/Task";
 import { localizeDom, t } from "../i18n";
 import { openPluginSettings } from "../utils/obsidian-settings";
+import { runAsyncAction } from "../utils/async-action";
 
 export const VIEW_TYPE_TODO_NAV = "plan-to-day-nav";
 
@@ -52,11 +53,11 @@ export class TodoNavView extends ItemView {
       const iconEl = item.createSpan({ cls: "todo-nav-icon" });
       setIcon(iconEl, v.icon);
       item.createSpan({ text: v.label });
-      item.addEventListener("click", async () => {
+      item.addEventListener("click", () => { runAsyncAction((async () => {
         if (this.plugin.activateNav) await this.plugin.activateNav(v.key);
         this.collapseSidebar();
         await this.renderNav();
-      });
+      })(), "TodoNavView interaction"); });
     }
 
     // Plan group
@@ -78,11 +79,11 @@ export class TodoNavView extends ItemView {
       const piIcon = item.createSpan({ cls: "todo-nav-icon" });
       setIcon(piIcon, pi.icon);
       item.createSpan({ text: pi.name });
-      item.addEventListener("click", async () => {
+      item.addEventListener("click", () => { runAsyncAction((async () => {
         if (this.plugin.activatePlan) await this.plugin.activatePlan(pi.kind);
         this.collapseSidebar();
         await this.renderNav();
-      });
+      })(), "TodoNavView interaction"); });
     }
     planHeader.addEventListener("click", () => {
       this.plugin.settings.planGroupCollapsed = !this.plugin.settings.planGroupCollapsed;
@@ -110,7 +111,7 @@ export class TodoNavView extends ItemView {
       const qdIcon = qItem.createSpan({ cls: "todo-nav-icon" });
       setIcon(qdIcon, qd.icon);
       qItem.createSpan({ text: qd.key });
-      qItem.addEventListener("click", async () => {
+      qItem.addEventListener("click", () => { runAsyncAction((async () => {
         this.plugin.settings.selectedQuadrant = qd.key;
         this.plugin.settings.activeViewNav = "all";
         this.plugin.settings.selectedListId = null;
@@ -118,7 +119,7 @@ export class TodoNavView extends ItemView {
         if (this.plugin.activateNav) await this.plugin.activateNav("all");
         this.collapseSidebar();
         await this.renderNav();
-      });
+      })(), "TodoNavView interaction"); });
     }
     qHeader.addEventListener("click", () => {
       this.plugin.settings.quadrantGroupCollapsed = !this.plugin.settings.quadrantGroupCollapsed;
@@ -154,41 +155,41 @@ export class TodoNavView extends ItemView {
         const lIcon = lItem.createSpan({ cls: "todo-nav-icon" });
         setIcon(lIcon, l.icon || "list");
         lItem.createSpan({ text: l.name });
-        lItem.addEventListener("click", async () => {
+        lItem.addEventListener("click", () => { runAsyncAction((async () => {
           if (this.plugin.activateList) await this.plugin.activateList(l.id);
           await this.renderNav();
-        });
+        })(), "TodoNavView interaction"); });
       }
-      gHeader.addEventListener("click", async () => {
+      gHeader.addEventListener("click", () => { runAsyncAction((async () => {
         await this.plugin.groupService.toggleCollapse(g.id);
         g.isCollapsed = !g.isCollapsed;
         gList.toggleClass("todo-is-hidden", g.isCollapsed);
         arrow.toggleClass("collapsed", g.isCollapsed);
-      });
+      })(), "TodoNavView interaction"); });
     }
     for (const l of ungrouped) {
       const lItem = listSection.createDiv({ cls: "todo-nav-item" + (selectedListId === l.id ? " active" : ""), attr: { "data-list-id": l.id } });
       const lIcon = lItem.createSpan({ cls: "todo-nav-icon" });
       setIcon(lIcon, l.icon || "list");
       lItem.createSpan({ text: l.name });
-      lItem.addEventListener("click", async () => {
+      lItem.addEventListener("click", () => { runAsyncAction((async () => {
         if (this.plugin.activateList) await this.plugin.activateList(l.id);
         this.collapseSidebar();
         await this.renderNav();
-      });
+      })(), "TodoNavView interaction"); });
     }
 
     // Add list button
     const addBtn = listSection.createDiv({ cls: "todo-nav-item todo-nav-add" });
     addBtn.createSpan({ text: "+ \u65b0\u5efa\u5217\u8868" });
-    addBtn.addEventListener("click", async () => {
+    addBtn.addEventListener("click", () => { runAsyncAction((async () => {
       const prompt = new PromptModal(this.app, "\u8f93\u5165\u5217\u8868\u540d\u79f0");
       const name = await prompt.openAndGetValue();
       if (name) {
         await this.plugin.listService.create({ name });
         await this.renderNav();
       }
-    });
+    })(), "TodoNavView interaction"); });
 
     // Bottom actions shared with the desktop navigation.
     const settingsContainer = this.contentEl.createDiv({ cls: "todo-nav-settings" });
@@ -202,32 +203,32 @@ export class TodoNavView extends ItemView {
     const reviewBtn = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });
     setIcon(reviewBtn, "bar-chart-2");
     reviewBtn.title = "统计";
-    reviewBtn.addEventListener("click", async () => {
+    reviewBtn.addEventListener("click", () => { runAsyncAction((async () => {
       if (this.plugin.activateNav) await this.plugin.activateNav("review");
       this.collapseSidebar();
       await this.renderNav();
-    });
+    })(), "TodoNavView interaction"); });
 
     const trashBtn = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });
     setIcon(trashBtn, "trash-2");
     trashBtn.title = "回收站";
-    trashBtn.addEventListener("click", async () => {
+    trashBtn.addEventListener("click", () => { runAsyncAction((async () => {
       if (this.plugin.activateNav) await this.plugin.activateNav("trash");
       this.collapseSidebar();
       await this.renderNav();
-    });
+    })(), "TodoNavView interaction"); });
 
     const addGroupBtn = settingsContainer.createDiv({ cls: "todo-nav-settings-btn" });
     setIcon(addGroupBtn, "folder-plus");
     addGroupBtn.title = "新建分组";
-    addGroupBtn.addEventListener("click", async () => {
+    addGroupBtn.addEventListener("click", () => { runAsyncAction((async () => {
       const prompt = new PromptModal(this.app, "输入分组名称");
       const name = await prompt.openAndGetValue();
       if (name) {
         await this.plugin.groupService.create({ name });
         await this.renderNav();
       }
-    });
+    })(), "TodoNavView interaction"); });
     localizeDom(this.contentEl);
   }
 }
@@ -239,7 +240,7 @@ class PromptModal extends Modal {
   constructor(app: App, promptText: string) { super(app); this.promptText = t(promptText); }
   onOpen(): void {
     this.contentEl.createEl("p", { text: this.promptText });
-    const input = this.contentEl.createEl("input") as HTMLInputElement;
+    const input = this.contentEl.createEl("input");
     input.placeholder = this.promptText;
     input.addEventListener("input", () => { this.value = input.value; });
     input.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { this.resolve(input.value.trim()); this.close(); } });

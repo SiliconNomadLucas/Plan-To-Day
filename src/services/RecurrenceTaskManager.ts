@@ -186,7 +186,7 @@ export class RecurrenceTaskManager {
       await this.seriesService.upsert(createRecurrenceSeries({
         id: groupId,
         rule: recurrence,
-        startDate: extractLocalDate(task.dueDate!),
+        startDate: extractLocalDate(task.dueDate),
         endDate: task.recurrenceEndDate,
         title: task.title,
         note: task.note,

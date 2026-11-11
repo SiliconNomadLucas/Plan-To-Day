@@ -4,6 +4,7 @@ import { extractLocalDate } from "../utils/recurrence";
 import { getReviewRange, reviewDateToString, shiftReviewDate, type ReviewDateState, type ReviewMode } from "../utils/review";
 import { buildMonthlyReviewTrend, buildTagDistribution, buildWeeklyReviewTrend } from "../utils/review-data";
 import { isEnglish, systemTagName, t } from "../i18n";
+import { runAsyncAction } from "../utils/async-action";
 import {
   renderDistributionBar,
   renderMonthCalendar,
@@ -66,18 +67,17 @@ export class ReviewRenderer {
 
   private renderDay(container: HTMLDivElement, state: ReviewDateState): void {
     const dateStr = reviewDateToString(state);
-    const stats = this.plugin.statsService.getDayStats(dateStr);
     const summary = this.plugin.statsService.getStatusSummary(dateStr, dateStr);
     const statsRow = container.createDiv({ cls: "todo-review-stats-row" });
-    renderStatCard(statsRow, t("今日任务"), String(summary.total), "calendar-check", "#6D91B6", () => this.navigateWithFilter({ type: "date", value: dateStr, label: dateStr + " " + t("今日任务"), dateField: "dueDate" }));
-    renderStatCard(statsRow, t("今日完成"), String(summary.completed), "check-circle-2", "#41B974", () => this.navigateWithFilter({ type: "date", value: dateStr, label: dateStr + " " + t("完成"), dateField: "completedAt" }));
+    renderStatCard(statsRow, t("今日任务"), String(summary.total), "calendar-check", "#6D91B6", () => { runAsyncAction(this.navigateWithFilter({ type: "date", value: dateStr, label: dateStr + " " + t("今日任务"), dateField: "dueDate" }), "ReviewRenderer interaction"); });
+    renderStatCard(statsRow, t("今日完成"), String(summary.completed), "check-circle-2", "#41B974", () => { runAsyncAction(this.navigateWithFilter({ type: "date", value: dateStr, label: dateStr + " " + t("完成"), dateField: "completedAt" }), "ReviewRenderer interaction"); });
     renderStatCard(statsRow, t("进行中"), String(summary.active), "timer", "#6D91B6");
     renderStatCard(statsRow, t("已搁置"), String(summary.shelved), "pause-circle", "#C19957");
     renderStatCard(statsRow, t("已放弃"), String(summary.abandoned), "x-circle", "#9AA1A1");
     renderStatCard(statsRow, t("完成率"), summary.completionRate + "%", "bar-chart-2", "#91719E");
     const yesterdayStr = reviewDateToString(shiftReviewDate(state, "day", -1));
     const yesterdayOverdue = this.plugin.statsService.getStatusSummary(yesterdayStr, yesterdayStr).overdue;
-    renderStatCard(statsRow, t("昨日逾期"), String(yesterdayOverdue), "alert-triangle", "#BC6F67", () => this.navigateWithFilter({ type: "date", value: yesterdayStr, label: yesterdayStr + " " + t("逾期任务"), dateField: "dueDate" }));
+    renderStatCard(statsRow, t("昨日逾期"), String(yesterdayOverdue), "alert-triangle", "#BC6F67", () => { runAsyncAction(this.navigateWithFilter({ type: "date", value: yesterdayStr, label: yesterdayStr + " " + t("逾期任务"), dateField: "dueDate" }), "ReviewRenderer interaction"); });
 
     const todayTasks = this.plugin.taskService.getAll().filter((task) => task.dueDate && extractLocalDate(task.dueDate) === dateStr);
     this.renderDistribution(container, todayTasks, "quadrant", "四象限分布");
@@ -91,13 +91,13 @@ export class ReviewRenderer {
     const stats = this.plugin.statsService.getWeekStats(weekYear, week);
     const summary = this.plugin.statsService.getStatusSummary(range.start, range.end);
     const statsRow = container.createDiv({ cls: "todo-review-stats-row" });
-    renderStatCard(statsRow, t("本周任务"), String(summary.total), "calendar-check", "#6D91B6", () => this.navigateWithFilter({ type: "date", value: range.start, label: t("本周任务"), dateField: "dueDate" }));
-    renderStatCard(statsRow, t("本周完成"), String(summary.completed), "check-circle-2", "#41B974", () => this.navigateWithFilter({ type: "date", value: range.start, label: t("本周完成"), dateField: "completedAt" }));
+    renderStatCard(statsRow, t("本周任务"), String(summary.total), "calendar-check", "#6D91B6", () => { runAsyncAction(this.navigateWithFilter({ type: "date", value: range.start, label: t("本周任务"), dateField: "dueDate" }), "ReviewRenderer interaction"); });
+    renderStatCard(statsRow, t("本周完成"), String(summary.completed), "check-circle-2", "#41B974", () => { runAsyncAction(this.navigateWithFilter({ type: "date", value: range.start, label: t("本周完成"), dateField: "completedAt" }), "ReviewRenderer interaction"); });
     renderStatCard(statsRow, t("进行中"), String(summary.active), "timer", "#6D91B6");
     renderStatCard(statsRow, t("已搁置"), String(summary.shelved), "pause-circle", "#C19957");
     renderStatCard(statsRow, t("已放弃"), String(summary.abandoned), "x-circle", "#9AA1A1");
     renderStatCard(statsRow, t("完成率"), summary.completionRate + "%", "bar-chart-2", "#91719E");
-    renderStatCard(statsRow, t("逾期任务"), String(summary.overdue), "alert-triangle", "#BC6F67", () => this.navigateWithFilter({ type: "overdue", value: "", label: t("逾期任务") }));
+    renderStatCard(statsRow, t("逾期任务"), String(summary.overdue), "alert-triangle", "#BC6F67", () => { runAsyncAction(this.navigateWithFilter({ type: "overdue", value: "", label: t("逾期任务") }), "ReviewRenderer interaction"); });
 
     const dayLabels = isEnglish() ? ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] : ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
     const stackedData = stats.dailyTrend.map((item: { date: string; count: number; uncompleted: number }, index: number) => ({
@@ -121,13 +121,13 @@ export class ReviewRenderer {
     const range = getReviewRange(state, "month");
     const summary = this.plugin.statsService.getStatusSummary(range.start, range.end);
     const statsRow = container.createDiv({ cls: "todo-review-stats-row" });
-    renderStatCard(statsRow, t("本月任务"), String(summary.total), "calendar-check", "#6D91B6", () => this.navigateWithFilter({ type: "date", value: range.start, label: t("本月任务"), dateField: "dueDate" }));
-    renderStatCard(statsRow, t("本月完成"), String(summary.completed), "check-circle-2", "#41B974", () => this.navigateWithFilter({ type: "date", value: range.start, label: t("本月完成"), dateField: "completedAt" }));
+    renderStatCard(statsRow, t("本月任务"), String(summary.total), "calendar-check", "#6D91B6", () => { runAsyncAction(this.navigateWithFilter({ type: "date", value: range.start, label: t("本月任务"), dateField: "dueDate" }), "ReviewRenderer interaction"); });
+    renderStatCard(statsRow, t("本月完成"), String(summary.completed), "check-circle-2", "#41B974", () => { runAsyncAction(this.navigateWithFilter({ type: "date", value: range.start, label: t("本月完成"), dateField: "completedAt" }), "ReviewRenderer interaction"); });
     renderStatCard(statsRow, t("进行中"), String(summary.active), "timer", "#6D91B6");
     renderStatCard(statsRow, t("已搁置"), String(summary.shelved), "pause-circle", "#C19957");
     renderStatCard(statsRow, t("已放弃"), String(summary.abandoned), "x-circle", "#9AA1A1");
     renderStatCard(statsRow, t("完成率"), summary.completionRate + "%", "bar-chart-2", "#91719E");
-    renderStatCard(statsRow, t("逾期任务"), String(summary.overdue), "alert-triangle", "#BC6F67", () => this.navigateWithFilter({ type: "overdue", value: "", label: t("逾期任务") }));
+    renderStatCard(statsRow, t("逾期任务"), String(summary.overdue), "alert-triangle", "#BC6F67", () => { runAsyncAction(this.navigateWithFilter({ type: "overdue", value: "", label: t("逾期任务") }), "ReviewRenderer interaction"); });
 
     const calendarSection = container.createDiv({ cls: "todo-review-section" });
     calendarSection.createDiv({ cls: "todo-review-section-title", text: t("月度打卡") });
@@ -156,13 +156,13 @@ export class ReviewRenderer {
     const range = getReviewRange(state, "year");
     const summary = this.plugin.statsService.getStatusSummary(range.start, range.end);
     const statsRow = container.createDiv({ cls: "todo-review-stats-row" });
-    renderStatCard(statsRow, t("本年任务"), String(summary.total), "calendar-check", "#6D91B6", () => this.navigateWithFilter({ type: "date", value: range.start, label: t("本年任务"), dateField: "dueDate" }));
-    renderStatCard(statsRow, t("本年完成"), String(summary.completed), "check-circle-2", "#41B974", () => this.navigateWithFilter({ type: "date", value: range.start, label: t("本年完成"), dateField: "completedAt" }));
+    renderStatCard(statsRow, t("本年任务"), String(summary.total), "calendar-check", "#6D91B6", () => { runAsyncAction(this.navigateWithFilter({ type: "date", value: range.start, label: t("本年任务"), dateField: "dueDate" }), "ReviewRenderer interaction"); });
+    renderStatCard(statsRow, t("本年完成"), String(summary.completed), "check-circle-2", "#41B974", () => { runAsyncAction(this.navigateWithFilter({ type: "date", value: range.start, label: t("本年完成"), dateField: "completedAt" }), "ReviewRenderer interaction"); });
     renderStatCard(statsRow, t("进行中"), String(summary.active), "timer", "#6D91B6");
     renderStatCard(statsRow, t("已搁置"), String(summary.shelved), "pause-circle", "#C19957");
     renderStatCard(statsRow, t("已放弃"), String(summary.abandoned), "x-circle", "#9AA1A1");
     renderStatCard(statsRow, t("完成率"), summary.completionRate + "%", "bar-chart-2", "#91719E");
-    renderStatCard(statsRow, t("逾期任务"), String(summary.overdue), "alert-triangle", "#BC6F67", () => this.navigateWithFilter({ type: "overdue", value: "", label: t("逾期任务") }));
+    renderStatCard(statsRow, t("逾期任务"), String(summary.overdue), "alert-triangle", "#BC6F67", () => { runAsyncAction(this.navigateWithFilter({ type: "overdue", value: "", label: t("逾期任务") }), "ReviewRenderer interaction"); });
 
     const heatSection = container.createDiv({ cls: "todo-review-section" });
     heatSection.createDiv({ cls: "todo-review-section-title", text: t("年度打卡") });

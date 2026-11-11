@@ -31,10 +31,16 @@ describe("daily AI recommendations", () => {
       planKind: "year",
       planPeriodKey: "2026",
     });
+    const monthGoal = createTask({
+      id: "month-goal",
+      title: "Month goal",
+      planKind: "month",
+      planPeriodKey: "2026-11",
+    });
     const provider = new LocalAIProvider();
 
     const recommendations = await provider.recommendMyDay({
-      tasks: [weeklyGoal, ...scheduledTasks, otherWeekGoal, yearGoal],
+      tasks: [weeklyGoal, ...scheduledTasks, otherWeekGoal, yearGoal, monthGoal],
       date: DATE,
       intensity: "light",
     });
@@ -42,13 +48,14 @@ describe("daily AI recommendations", () => {
     const recommendation = recommendations.find((item) => item.parentId === weeklyGoal.id);
     expect(recommendation).toBeDefined();
     expect(recommendation?.title).toBe("Weekly goal");
-    expect(recommendation?.planKind).toBeUndefined();
-    expect(recommendation?.planPeriodKey).toBeUndefined();
+    expect(recommendation).not.toHaveProperty("planKind");
+    expect(recommendation).not.toHaveProperty("planPeriodKey");
     expect(recommendation?.sourceTaskId).toBeUndefined();
     expect(recommendation?.startDate).toMatch(/^2026-11-11T/);
     expect(recommendation?.warning).toContain("每日建议容量");
     expect(recommendations.some((item) => item.parentId === otherWeekGoal.id)).toBe(false);
     expect(recommendations.some((item) => item.parentId === yearGoal.id)).toBe(false);
+    expect(recommendations.some((item) => item.title === monthGoal.title)).toBe(false);
   });
 
   it("does not recommend a weekly goal already copied into the selected day", async () => {

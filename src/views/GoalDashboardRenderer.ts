@@ -7,6 +7,7 @@ import { currentPeriodKey, getParentPeriodKey, getSubPeriodKeysForParent, localT
 import { shiftGoalPeriodKey, summarizeGoalPeriod } from "../utils/goal-dashboard";
 import { localizedPeriodLabel, localizedSubGroupLabel } from "../utils/plan-labels";
 import { isEnglish, localizeDom, systemTagName, t } from "../i18n";
+import { runAsyncAction } from "../utils/async-action";
 
 interface GoalDashboardHost {
   getTaskListEl(): HTMLDivElement;
@@ -52,7 +53,7 @@ export class GoalDashboardRenderer {
   async renderGoalDashboard(kind: "year"|"month", preserveScrollPosition = false): Promise<void> {
     const renderToken = ++this.goalRenderToken;
     const previousScrollTop = preserveScrollPosition
-      ? (this.taskListEl.querySelector(".todo-goal-scroll-content") as HTMLElement | null)?.scrollTop ?? 0
+      ? this.taskListEl.querySelector<HTMLElement>(".todo-goal-scroll-content")?.scrollTop ?? 0
       : 0;
     this.taskListEl.removeClass("todo-life-active");
     this.taskListEl.empty();
@@ -84,7 +85,7 @@ export class GoalDashboardRenderer {
     const shift = (delta: number) => {
       this.periodKey = shiftGoalPeriodKey(kind, this.periodKey!, delta);
       updateLabel();
-      this.renderGoalDashboard(kind);
+      runAsyncAction(this.renderGoalDashboard(kind), "navigate goal period");
     };
 
     prevBtn.addEventListener("click", () => shift(-1));
@@ -92,7 +93,7 @@ export class GoalDashboardRenderer {
     backBtn.addEventListener("click", () => {
       this.periodKey = curNow;
       updateLabel();
-      this.renderGoalDashboard(kind);
+      runAsyncAction(this.renderGoalDashboard(kind), "return to current goal period");
     });
     this.goalKeyHandler = (e: KeyboardEvent) => {
       if (!(this.plugin.settings.activeViewNav === "plan" && (this.activePlanKind === "year" || this.activePlanKind === "month"))) return;
@@ -146,7 +147,7 @@ export class GoalDashboardRenderer {
       if (quarterKey) {
         const quarterTasks = this.plugin.taskService.getByPlanKindAndPeriod("quarter", quarterKey);
         const qSection = goalContent.createDiv({ cls: "todo-goal-quarter-section" });
-        const qLabel = qSection.createDiv({ cls: "todo-goal-quarter-label", text: isEnglish() ? this.localizedSubGroupLabel("quarter", quarterKey) + " Goals" : subGroupLabel("quarter", quarterKey) + " 目标" });
+        qSection.createDiv({ cls: "todo-goal-quarter-label", text: isEnglish() ? this.localizedSubGroupLabel("quarter", quarterKey) + " Goals" : subGroupLabel("quarter", quarterKey) + " 目标" });
         const qScroll = qSection.createDiv({ cls: "todo-goal-quarter-scroll" });
         for (const qt of quarterTasks) {
           const qCard = qScroll.createDiv({ cls: "todo-goal-quarter-card", attr: { "data-task-id": qt.id, draggable: "true" } });
@@ -180,7 +181,7 @@ export class GoalDashboardRenderer {
         ev.preventDefault();
         if (ev.dataTransfer) ev.dataTransfer.dropEffect = "copy";
       });
-      quarterDropZone.addEventListener("drop", async (ev) => {
+      quarterDropZone.addEventListener("drop", (ev) => { runAsyncAction((async () => {
         ev.preventDefault();
         ev.stopPropagation();
         quarterDropZone?.removeClass("is-active");
@@ -214,29 +215,29 @@ export class GoalDashboardRenderer {
           });
         }
         await this.renderGoalDashboard("month");
-      });
+      })(), "GoalDashboardRenderer interaction"); });
     }
 
 
     const modeSwitch = nav.createDiv({ cls: "todo-goal-mode-switch" });
     const cardModeBtn = modeSwitch.createSpan({ cls: "todo-goal-mode-btn" + (this.plugin.settings.goalViewMode !== "list" ? " active" : ""), text: t("卡片") });
     const listModeBtn = modeSwitch.createSpan({ cls: "todo-goal-mode-btn" + (this.plugin.settings.goalViewMode === "list" ? " active" : ""), text: t("列表") });
-    cardModeBtn.addEventListener("click", async () => {
+    cardModeBtn.addEventListener("click", () => { runAsyncAction((async () => {
       if (this.plugin.settings.goalViewMode !== "card") {
         this.plugin.settings.goalViewMode = "card";
         await this.plugin.saveSettings();
         cardModeBtn.addClass("active"); listModeBtn.removeClass("active");
         await this.renderGoalDashboard(kind);
       }
-    });
-    listModeBtn.addEventListener("click", async () => {
+    })(), "GoalDashboardRenderer interaction"); });
+    listModeBtn.addEventListener("click", () => { runAsyncAction((async () => {
       if (this.plugin.settings.goalViewMode !== "list") {
         this.plugin.settings.goalViewMode = "list";
         await this.plugin.saveSettings();
         listModeBtn.addClass("active"); cardModeBtn.removeClass("active");
         await this.renderGoalDashboard(kind);
       }
-    });
+    })(), "GoalDashboardRenderer interaction"); });
 
     const goalAllTags = this.plugin.tagService.getAll();
     const sorted = periodTasks.slice().sort((a, b) => (b.isImportant ? 1 : 0) - (a.isImportant ? 1 : 0));
@@ -246,7 +247,7 @@ export class GoalDashboardRenderer {
       this.planGroupRenderer.renderGoalList(contentEl, kind, periodKey);
     } else {
     const cards = goalContent.createDiv({ cls: "todo-goal-cards" });
-    const goalScrollTarget = cards.createDiv({ cls: "todo-goal-scroll-target" });
+    cards.createDiv({ cls: "todo-goal-scroll-target" });
 
     if (sorted.length === 0) {
       const guide = cards.createDiv({ cls: "todo-goal-guide" });
@@ -260,7 +261,7 @@ export class GoalDashboardRenderer {
       const total = children.length;
       const done = children.filter((c) => c.isCompleted).length;
       const rate = total === 0 ? null : done / total;
-      const overdue = !goal.isCompleted && !!goal.dueDate && extractLocalDate(goal.dueDate!) < todayStr;
+      const overdue = !goal.isCompleted && !!goal.dueDate && extractLocalDate(goal.dueDate) < todayStr;
       // Find parent plan based on period hierarchy (month→quarter, quarter→year)
       let parent: Task | undefined;
       // Use explicit parentId first; fall back to period-based lookup
@@ -284,7 +285,7 @@ export class GoalDashboardRenderer {
       if (kind === "month") {
         card.addEventListener("dragover", (ev) => { ev.preventDefault(); card.addClass("todo-goal-card-drop-hover"); });
         card.addEventListener("dragleave", () => { card.removeClass("todo-goal-card-drop-hover"); });
-        card.addEventListener("drop", async (ev) => {
+        card.addEventListener("drop", (ev) => { runAsyncAction((async () => {
           ev.preventDefault();
           card.removeClass("todo-goal-card-drop-hover");
           const dragId = ev.dataTransfer?.getData("text/plain");
@@ -292,18 +293,18 @@ export class GoalDashboardRenderer {
             await this.plugin.taskService.update(goal.id, { parentId: dragId });
             await this.renderGoalDashboard(kind);
           }
-        });
+        })(), "GoalDashboardRenderer interaction"); });
       }
 
             // row1: checkbox + title + right-aligned parent/tags
       const row1 = card.createDiv({ cls: "todo-goal-card-row" });
       const checkbox = row1.createDiv({ cls: "todo-checkbox" + (goal.isCompleted ? " checked" : ""), text: goal.isCompleted ? "✓" : "" });
-      checkbox.addEventListener("click", async (ev) => {
+      checkbox.addEventListener("click", (ev) => { runAsyncAction((async () => {
         ev.stopPropagation();
         const cur = this.plugin.taskService.getAll().find((t) => t.id === goal.id); if (cur && cur.isCompleted) { await this.plugin.taskService.uncomplete(goal.id); }
         else { await this.plugin.taskService.complete(goal.id); }
         this.refreshGoalCardAndStats(goal.id, kind);
-      });
+      })(), "GoalDashboardRenderer interaction"); });
       row1.createSpan({ cls: "todo-goal-card-title", text: goal.title });
       if (!goal.isCompleted && goal.status !== "active") {
         const statusEl = row1.createSpan({ cls: "todo-goal-status-badge" + (goal.status === "shelved" ? " is-shelved" : " is-abandoned") });
@@ -312,11 +313,11 @@ export class GoalDashboardRenderer {
         setIcon(restoreBtn, "play-circle");
         restoreBtn.setAttribute("aria-label", t("恢复为进行中"));
         restoreBtn.setAttribute("title", t("恢复为进行中"));
-        restoreBtn.addEventListener("click", async (ev) => {
+        restoreBtn.addEventListener("click", (ev) => { runAsyncAction((async () => {
           ev.stopPropagation();
           await this.plugin.taskService.update(goal.id, { status: "active" });
           await this.renderGoalDashboard(kind);
-        });
+        })(), "GoalDashboardRenderer interaction"); });
       }
       if (parent || goalTags.length > 0) {
         const right = row1.createDiv({ cls: "todo-goal-card-right" });
@@ -374,14 +375,13 @@ export class GoalDashboardRenderer {
             const key = c.planPeriodKey && grouped.has(c.planPeriodKey) ? c.planPeriodKey : null;
             if (key) grouped.get(key)!.push({ task: c, completed: c.isCompleted });
           }
-          let hasAny = false;
           const KR_LIMIT = 50;
           let krRendered = 0;
           const renderKRItem = (sk: string, it: { task: Task; completed: boolean }, goalId: string, k: "year" | "month") => {
-            const krOverdue = !it.completed && !!it.task.dueDate && extractLocalDate(it.task.dueDate!) < todayStr;
+            const krOverdue = !it.completed && !!it.task.dueDate && extractLocalDate(it.task.dueDate) < todayStr;
             const row = body.createDiv({ cls: "todo-goal-kr-item" + (it.completed ? " todo-goal-kr-done" : "") + (krOverdue ? " todo-goal-kr-overdue" : "") });
             const krCheck = row.createDiv({ cls: "todo-checkbox" + (it.completed ? " checked" : ""), text: it.completed ? "✓" : "" });
-            krCheck.addEventListener("click", async (ev) => {
+            krCheck.addEventListener("click", (ev) => { runAsyncAction((async () => {
               ev.stopPropagation();
               if (it.completed) { await this.plugin.taskService.uncomplete(it.task.id); }
               else { await this.plugin.taskService.complete(it.task.id); }
@@ -389,15 +389,14 @@ export class GoalDashboardRenderer {
               krCheck.setText(it.completed ? "✓" : ""); krCheck.toggleClass("checked", it.completed);
               row.toggleClass("todo-goal-kr-done", it.completed);
               this.refreshGoalCardAndStats(goalId, k);
-            });
+            })(), "GoalDashboardRenderer interaction"); });
             row.createSpan({ cls: "todo-goal-kr-title", text: it.task.title });
-            row.addEventListener("click", async (ev) => {
+            row.addEventListener("click", (ev) => { runAsyncAction((async () => {
               ev.stopPropagation();
               await this.host.openTask(it.task.id);
-            });
+            })(), "GoalDashboardRenderer interaction"); });
           };
           for (const [sk, items] of grouped) {
-            hasAny = true;
             const title = this.localizedSubGroupLabel(subKind, sk);
             const sgHeader = body.createDiv({ cls: "todo-goal-subgroup-title" });
             sgHeader.createSpan({ text: title });
@@ -410,8 +409,7 @@ export class GoalDashboardRenderer {
               }
               if (sgHeader.dataset.addOpen === "1") return;
               sgHeader.dataset.addOpen = "1";
-              const inputWrap = document.createElement("div");
-              inputWrap.className = "todo-goal-subgroup-inline-input";
+              const inputWrap = sgHeader.createDiv({ cls: "todo-goal-subgroup-inline-input" });
               sgHeader.after(inputWrap);
               const input = inputWrap.createEl("input", { type: "text", placeholder: "输入KR标题..." });
               input.focus();
@@ -420,7 +418,7 @@ export class GoalDashboardRenderer {
                 if (saved || !input.value.trim()) { if (inputWrap.isConnected) inputWrap.remove(); sgHeader.dataset.addOpen = "0"; return; }
                 saved = true;
                 try {
-                  const newTask = await this.plugin.taskService.create({
+                  await this.plugin.taskService.create({
                     title: input.value.trim(),
                     planKind: subKind,
                     planPeriodKey: sk,
@@ -562,7 +560,7 @@ export class GoalDashboardRenderer {
             .setIcon("trash")
             .onClick(async () => {
               await this.plugin.taskService.delete(goal.id);
-              this.renderGoalDashboard(kind, true);
+              await this.renderGoalDashboard(kind, true);
             }),
         );
 
@@ -584,7 +582,7 @@ export class GoalDashboardRenderer {
       obs.observe(sentinel);
     }
 
-    const firstCard = cards.querySelector(".todo-goal-card") as HTMLElement | null;
+    const firstCard = cards.querySelector<HTMLElement>(".todo-goal-card");
     const targetEl = firstCard ?? statsRow;
     if (preserveScrollPosition) {
       goalContent.scrollTop = previousScrollTop;
@@ -595,17 +593,17 @@ export class GoalDashboardRenderer {
   }
 
   private refreshGoalCardAndStats(goalId: string, kind: "year" | "month"): void {
-    const card = this.taskListEl.querySelector(`[data-goal-id="${goalId}"]`) as HTMLElement | null;
+    const card = this.taskListEl.querySelector<HTMLElement>(`[data-goal-id="${goalId}"]`);
     if (!card) return;
     const goal = this.plugin.taskService.getAll().find((t) => t.id === goalId);
     if (!goal) return;
 
     // update check symbol
-    const checkEl = card.querySelector(".todo-checkbox") as HTMLElement | null;
+    const checkEl = card.querySelector<HTMLElement>(".todo-checkbox");
     if (checkEl) { checkEl.setText(goal.isCompleted ? "✓" : ""); checkEl.toggleClass("checked", goal.isCompleted); }
 
     // update title completed style
-    const titleEl = card.querySelector(".todo-goal-card-title") as HTMLElement | null;
+    const titleEl = card.querySelector<HTMLElement>(".todo-goal-card-title");
     if (titleEl) titleEl.toggleClass("completed", goal.isCompleted);
 
     // recalculate KR progress
@@ -626,8 +624,8 @@ export class GoalDashboardRenderer {
     }
 
     // update progress bar (create if missing)
-    let barFill = card.querySelector(".todo-goal-progress-fill") as HTMLElement | null;
-    let barText = card.querySelector(".todo-goal-progress-text") as HTMLElement | null;
+    let barFill = card.querySelector<HTMLElement>(".todo-goal-progress-fill");
+    let barText = card.querySelector<HTMLElement>(".todo-goal-progress-text");
     if (rate !== null && !barFill && metricsRow) {
       const barWrap = metricsRow.createDiv({ cls: "todo-goal-progress" });
       barFill = barWrap.createDiv({ cls: "todo-goal-progress-fill" });
@@ -641,9 +639,9 @@ export class GoalDashboardRenderer {
 
     // update overdue state
     const todayStr = localTodayStr();
-    const overdue = !goal.isCompleted && !!goal.dueDate && extractLocalDate(goal.dueDate!) < todayStr;
+    const overdue = !goal.isCompleted && !!goal.dueDate && extractLocalDate(goal.dueDate) < todayStr;
     card.toggleClass("todo-goal-card-overdue", overdue);
-    let overdueBadge = card.querySelector(".todo-goal-overdue-badge") as HTMLElement | null;
+    let overdueBadge = card.querySelector<HTMLElement>(".todo-goal-overdue-badge");
     if (overdue && !overdueBadge) {
       const r2 = card.querySelector(".todo-goal-card-metrics");
       if (r2) r2.createSpan({ cls: "todo-goal-overdue-badge", text: "\u903E\u671F" });
@@ -655,7 +653,7 @@ export class GoalDashboardRenderer {
     const goalAllTasks = this.plugin.taskService.getAll();
     const summary = summarizeGoalPeriod(goalAllTasks, kind, this.periodKey ?? "", todayStr);
 
-    const statsRow = this.taskListEl.querySelector(".todo-goal-stats-row") as HTMLElement | null;
+    const statsRow = this.taskListEl.querySelector<HTMLElement>(".todo-goal-stats-row");
     if (statsRow) {
       const values = statsRow.querySelectorAll(".todo-goal-stat-value");
       if (values[0]) values[0].setText(String(summary.total));
@@ -669,12 +667,12 @@ export class GoalDashboardRenderer {
       }
       if (values[5]) {
         values[5].setText(String(summary.overdue));
-        const oc = values[5].closest(".todo-goal-stat-card") as HTMLElement | null;
+    const oc = values[5].closest<HTMLElement>(".todo-goal-stat-card");
         if (oc) { oc.removeClass("todo-goal-stat-overdue"); oc.removeClass("todo-goal-stat-overdue-empty"); oc.addClass(summary.overdue > 0 ? "todo-goal-stat-overdue" : "todo-goal-stat-overdue-empty"); }
       }
       if (values[6]) {
         values[6].setText(summary.completionRate + "%");
-        const rc = values[6].closest(".todo-goal-stat-card") as HTMLElement | null;
+    const rc = values[6].closest<HTMLElement>(".todo-goal-stat-card");
         if (rc) { rc.removeClass("todo-goal-stat-rate-full"); if (summary.completionRate >= 100) rc.addClass("todo-goal-stat-rate-full"); }
       }
     }

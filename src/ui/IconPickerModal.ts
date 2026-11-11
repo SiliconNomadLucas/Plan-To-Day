@@ -38,7 +38,7 @@ export class IconPickerModal extends Modal {
     const searchInput = contentEl.createEl("input", {
       cls: "todo-icon-picker-search",
       attr: { type: "text", placeholder: "搜索图标..." },
-    }) as HTMLInputElement;
+    });
 
     // Icon grid container
     const gridEl = contentEl.createDiv({ cls: "todo-icon-picker-grid" });

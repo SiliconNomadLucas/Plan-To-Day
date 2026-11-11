@@ -2,6 +2,7 @@ import { Notice, setIcon } from "obsidian";
 import type { TodoPluginLike } from "./TodoView";
 import type { AIRecommendation } from "../services/AIRecommendationService";
 import { t } from "../i18n";
+import { runAsyncAction } from "../utils/async-action";
 
 export class AIRecommendationView {
   private plugin: TodoPluginLike;
@@ -42,7 +43,7 @@ export class AIRecommendationView {
     setIcon(refresh, "refresh-cw");
     refresh.title = t("刷新推荐");
     refresh.setAttribute("aria-label", t("刷新推荐"));
-    refresh.addEventListener("click", async () => {
+    refresh.addEventListener("click", () => { runAsyncAction((async () => {
       if (refresh.getAttribute("aria-busy") === "true") return;
       refresh.setAttribute("aria-busy", "true");
       refresh.toggleClass("is-loading", true);
@@ -56,7 +57,7 @@ export class AIRecommendationView {
         refresh.setAttribute("aria-busy", "false");
         refresh.toggleClass("is-loading", false);
       }
-    });
+    })(), "AIRecommendationView interaction"); });
   }
 
   close(): void {
@@ -79,8 +80,6 @@ export class AIRecommendationView {
     const recommendationDate = item.dueDate?.substring(0, 10) ?? item.startDate?.substring(0, 10);
     if (recommendationDate) meta.createSpan({ text: ` · ${recommendationDate}` });
     if (item.myDayGroup) meta.createSpan({ text: ` · ${t(item.myDayGroup === "morning" ? "早上" : item.myDayGroup === "afternoon" ? "下午" : item.myDayGroup === "evening" ? "晚上" : "全天")}` });
-    if (item.planPeriodKey) meta.createSpan({ text: ` · ${item.planPeriodKey}` });
-    if (item.weekStart && item.weekEnd) meta.createDiv({ text: `${item.weekStart} ~ ${item.weekEnd}` });
     if (item.note) body.createDiv({ cls: "todo-ai-card-note", text: item.note });
     if (item.tags.length) {
       const names = item.tags.map((id) => this.plugin.tagService.getById(id)?.name ?? id);
@@ -95,7 +94,18 @@ export class AIRecommendationView {
     const controls = card.createDiv({ cls: "todo-ai-card-controls" });
     const accept = controls.createEl("button", { cls: "todo-ai-card-action" });
     setIcon(accept, "plus"); accept.title = t("加入"); accept.setAttribute("aria-label", t("加入"));
-    accept.addEventListener("click", async () => { accept.disabled = true; await onAccept(item); card.remove(); });
+    accept.addEventListener("click", () => {
+      runAsyncAction((async () => {
+        accept.disabled = true;
+        try {
+          await onAccept(item);
+          card.remove();
+        } catch (error) {
+          accept.disabled = false;
+          throw error;
+        }
+      })(), "AIRecommendationView interaction");
+    });
     const dismiss = controls.createEl("button", { cls: "todo-ai-card-action" });
     setIcon(dismiss, "x"); dismiss.title = t("移除推荐"); dismiss.setAttribute("aria-label", t("移除推荐"));
     dismiss.addEventListener("click", () => { const index = items.indexOf(item); if (index >= 0) items.splice(index, 1); card.remove(); });

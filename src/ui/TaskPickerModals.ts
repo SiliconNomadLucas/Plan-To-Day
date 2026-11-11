@@ -26,7 +26,7 @@ export class TagPickerModal extends Modal {
     const searchInput = this.contentEl.createEl("input", {
       cls: "todo-tag-picker-search",
       attr: { type: "text", placeholder: "搜索标签..." },
-    }) as HTMLInputElement;
+    });
 
     const gridEl = this.contentEl.createDiv({ cls: "todo-tag-picker-grid" });
     const allTags = this.plugin.tagService.getAll().filter((t) => !this.excludeQuadrant || t.sortOrder >= 4);
@@ -92,7 +92,7 @@ export class ParentPickerModal extends Modal {
     this.contentEl.addClass("todo-parent-picker");
     const title = this.mode === "parent" ? "\u9009\u62e9\u7236\u4efb\u52a1" : "\u9009\u62e9\u5b50\u4efb\u52a1";
     this.contentEl.createDiv({ cls: "todo-parent-picker-title", text: title });
-    const searchInput = this.contentEl.createEl("input", { cls: "todo-parent-picker-search", attr: { type: "text", placeholder: "\u641c\u7d22\u4efb\u52a1..." } }) as HTMLInputElement;
+    const searchInput = this.contentEl.createEl("input", { cls: "todo-parent-picker-search", attr: { type: "text", placeholder: "\u641c\u7d22\u4efb\u52a1..." } });
     const listEl = this.contentEl.createDiv({ cls: "todo-parent-picker-list" });
     const CHILD_KIND: Record<string, string> = { life: "year", year: "quarter", quarter: "month", month: "week" };
     const PARENT_KIND: Record<string, string> = { year: "life", quarter: "year", month: "quarter", week: "month" };

@@ -3,7 +3,6 @@ import { Task, PlanKind, createTask } from "../models/Task";
 import { PersistentJsonService } from "./PersistentJsonService";
 import { logger } from "../utils/logger";
 import { localTodayStr } from "../utils/period";
-import { extractLocalDate } from "../utils/recurrence";
 import type { RecurrenceSeriesService } from "./RecurrenceSeriesService";
 import { RecurrenceTaskManager } from "./RecurrenceTaskManager";
 import { TaskHierarchyManager } from "./TaskHierarchyManager";

@@ -91,12 +91,12 @@ export class ScheduleDragController {
             const current = this.callbacks.getState();
             if (!current?.scrollContainer) return;
             current.scrollContainer.scrollTop += scrollDelta;
-            current.scrollRAF = requestAnimationFrame(tick);
+            current.scrollRAF = window.requestAnimationFrame(tick);
           };
-          state.scrollRAF = requestAnimationFrame(tick);
+          state.scrollRAF = window.requestAnimationFrame(tick);
         }
       } else if (state.scrollRAF) {
-        cancelAnimationFrame(state.scrollRAF);
+        window.cancelAnimationFrame(state.scrollRAF);
         state.scrollRAF = null;
       }
     }
@@ -106,11 +106,11 @@ export class ScheduleDragController {
     const state = this.callbacks.getState();
     if (!state) return;
     this.callbacks.setState(null);
-    if (state.scrollRAF) cancelAnimationFrame(state.scrollRAF);
+    if (state.scrollRAF) window.cancelAnimationFrame(state.scrollRAF);
     state.card.removeClass("dragging");
     state.ghost.remove();
     this.callbacks.setLastDragMoved(true);
-    setTimeout(() => this.callbacks.setLastDragMoved(false), 0);
+    window.setTimeout(() => this.callbacks.setLastDragMoved(false), 0);
 
     if (!state.moved) {
       this.callbacks.openTask(state.taskId);

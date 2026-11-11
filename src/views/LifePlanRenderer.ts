@@ -3,6 +3,7 @@ import type { Task } from "../models/Task";
 import type { DomainTag } from "../models/Tag";
 import { systemTagName } from "../i18n";
 import { ageFromDueDate, currentAge } from "../utils/period";
+import { runAsyncAction } from "../utils/async-action";
 
 interface LifePlanCallbacks {
   getTasks(): Task[];
@@ -91,11 +92,11 @@ export class LifePlanRenderer {
       cls: "todo-checkbox" + (task.isCompleted ? " checked" : ""),
       text: task.isCompleted ? "\u2713" : "",
     });
-    checkbox.addEventListener("click", async (event) => {
+    checkbox.addEventListener("click", (event) => { runAsyncAction((async () => {
       event.stopPropagation();
       await this.callbacks.toggleCompletion(task);
       await this.render(root, birthday);
-    });
+    })(), "LifePlanRenderer interaction"); });
     card.createSpan({
       cls: "todo-life-card-title" + (task.isCompleted ? " completed" : ""),
       text: task.title,
