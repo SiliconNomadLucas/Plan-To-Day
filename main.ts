@@ -50,11 +50,17 @@ export default class ObsidianTodoPlugin extends Plugin {
     this.listService = new ListService(this.app.vault, this.settings.todoFolder, this.settings.defaultListName);
     this.recurrenceSeriesService = new RecurrenceSeriesService(this.app.vault, this.settings.todoFolder);
     await this.recurrenceSeriesService.init();
+    this.tagService = new TagService(this.app.vault, this.settings.todoFolder);
+    await this.tagService.init();
     this.taskService = new TaskService(
       this.app.vault,
       this.settings.todoFolder,
       this.recurrenceSeriesService,
       () => new Notice("任务备份失败，本次保存仍会继续"),
+      (tagId) => {
+        const tag = this.tagService.getById(tagId);
+        return !!tag?.isDefault && tag.sortOrder < 2;
+      },
     );
     await this.taskService.init();
     this.registerInterval(window.setInterval(() => {
@@ -68,8 +74,6 @@ export default class ObsidianTodoPlugin extends Plugin {
         .finally(() => { this.recurrenceRefreshInFlight = false; });
     }, 60 * 60 * 1000));
     await this.listService.init();
-    this.tagService = new TagService(this.app.vault, this.settings.todoFolder);
-    await this.tagService.init();
     this.groupService = new GroupService(this.app.vault, this.settings.todoFolder);
     await this.groupService.init();
     this.statsService = new StatsService(this.taskService, this.tagService, this.listService);

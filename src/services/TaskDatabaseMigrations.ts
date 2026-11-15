@@ -32,18 +32,31 @@ export interface TaskDatabaseMigrationResult {
   changed: boolean;
 }
 
-export const CURRENT_TASK_SCHEMA_VERSION = 4;
+export const CURRENT_TASK_SCHEMA_VERSION = 5;
 
-type Migration = (tasks: PersistedTask[]) => PersistedTask[];
+type Migration = (tasks: PersistedTask[], isImportantTag: (tagId: string) => boolean) => PersistedTask[];
 
 const MIGRATIONS: Record<number, Migration> = {
   0: migrateSoftDeleteAndRecurrenceFields,
   1: migrateTaskStatus,
   2: migrateLegacyMyDayFields,
   3: repairLegacyRecurrenceDates,
+  4: repairInheritedImportance,
 };
 
-export function migrateTaskDatabase(value: unknown): TaskDatabaseMigrationResult {
+function repairInheritedImportance(tasks: PersistedTask[], isImportantTag: (tagId: string) => boolean): PersistedTask[] {
+  const byId = new Map(tasks.map((task) => [task.id, task]));
+  return tasks.map((child) => {
+    if (!child.parentId || child.isDeleted || child.isRecurrenceTemplate || child.isImportant) return child;
+    const parent = byId.get(child.parentId);
+    if (!parent || parent.isDeleted || parent.isRecurrenceTemplate) return child;
+    if (!parent.isImportant && !parent.tags.some(isImportantTag)) return child;
+    if (child.tags.length !== parent.tags.length || !child.tags.every((tag) => parent.tags.includes(tag))) return child;
+    return { ...child, isImportant: true, updatedAt: new Date().toISOString() };
+  });
+}
+
+export function migrateTaskDatabase(value: unknown, isImportantTag: (tagId: string) => boolean = () => false): TaskDatabaseMigrationResult {
   if (!isRecord(value) || !Array.isArray(value.tasks) || !value.tasks.every(isPersistedTask)) {
     throw new Error("Invalid task database: expected a tasks array.");
   }
@@ -64,7 +77,7 @@ export function migrateTaskDatabase(value: unknown): TaskDatabaseMigrationResult
   while (schemaVersion < CURRENT_TASK_SCHEMA_VERSION) {
     const migration = MIGRATIONS[schemaVersion];
     if (!migration) throw new Error(`Missing task database migration from version ${schemaVersion}.`);
-    tasks = migration(tasks);
+    tasks = migration(tasks, isImportantTag);
     schemaVersion++;
   }
 

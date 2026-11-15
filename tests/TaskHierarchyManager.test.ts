@@ -2,17 +2,17 @@ import { describe, expect, it } from "vitest";
 import { createTask, type Task } from "../src/models/Task";
 import { TaskHierarchyManager } from "../src/services/TaskHierarchyManager";
 
-function managerFor(tasks: Task[]) {
+function managerFor(tasks: Task[], isImportantTag: (tagId: string) => boolean = () => false) {
   let saves = 0;
   return {
-    manager: new TaskHierarchyManager(() => tasks, async () => { saves++; }),
+    manager: new TaskHierarchyManager(() => tasks, async () => { saves++; }, isImportantTag),
     getSaves: () => saves,
   };
 }
 
 describe("TaskHierarchyManager", () => {
   it("cascades parent tags through all descendants", () => {
-    const parent = createTask({ id: "parent", tags: ["old"] });
+    const parent = createTask({ id: "parent", tags: ["old"], isImportant: true });
     const child = createTask({ id: "child", parentId: "parent" });
     const grandchild = createTask({ id: "grandchild", parentId: "child" });
     const { manager } = managerFor([parent, child, grandchild]);
@@ -21,6 +21,33 @@ describe("TaskHierarchyManager", () => {
 
     expect(child.tags).toEqual(["work"]);
     expect(grandchild.tags).toEqual(["work"]);
+    expect(child.isImportant).toBe(true);
+    expect(grandchild.isImportant).toBe(true);
+  });
+
+  it("inherits importance when attaching an existing task to a parent", () => {
+    const parent = createTask({ id: "parent", tags: ["urgent"], isImportant: true });
+    const child = createTask({ id: "child", parentId: "parent", tags: ["other"] });
+    const grandchild = createTask({ id: "grandchild", parentId: "child" });
+    const { manager } = managerFor([parent, child, grandchild]);
+
+    manager.inheritParentTags(child, parent.id);
+
+    expect(child.tags).toEqual(["urgent"]);
+    expect(child.isImportant).toBe(true);
+    expect(grandchild.tags).toEqual(["urgent"]);
+    expect(grandchild.isImportant).toBe(true);
+  });
+
+  it("recognizes an important quadrant tag even when the parent's old flag is false", () => {
+    const parent = createTask({ id: "parent", tags: ["urgent"], isImportant: false });
+    const child = createTask({ id: "child", parentId: parent.id });
+    const { manager } = managerFor([parent, child], (tagId) => tagId === "urgent");
+
+    manager.inheritParentTags(child, parent.id);
+
+    expect(child.tags).toEqual(["urgent"]);
+    expect(child.isImportant).toBe(true);
   });
 
   it("completes a parent only after every child is complete", async () => {

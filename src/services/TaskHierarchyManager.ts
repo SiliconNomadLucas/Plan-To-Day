@@ -4,11 +4,19 @@ export class TaskHierarchyManager {
   constructor(
     private readonly getTasks: () => Task[],
     private readonly save: () => Promise<void>,
+    private readonly isImportantTag: (tagId: string) => boolean = () => false,
   ) {}
 
+  private importanceOf(task: Task): boolean {
+    return task.isImportant || task.tags.some(this.isImportantTag);
+  }
+
   cascadeTags(taskId: string, tags: string[]): void {
+    const source = this.getTasks().find((task) => task.id === taskId);
+    if (!source) return;
     for (const child of this.childrenOf(taskId)) {
       child.tags = [...tags];
+      child.isImportant = this.importanceOf(source);
       child.updatedAt = new Date().toISOString();
       this.cascadeTags(child.id, tags);
     }
@@ -19,6 +27,7 @@ export class TaskHierarchyManager {
     const parent = this.getTasks().find((item) => item.id === parentId && !item.isDeleted && !item.isRecurrenceTemplate);
     if (!parent) return;
     task.tags = [...parent.tags];
+    task.isImportant = this.importanceOf(parent);
     task.updatedAt = new Date().toISOString();
     this.cascadeTags(task.id, task.tags);
   }

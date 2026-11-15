@@ -71,7 +71,7 @@ describe("TaskService integration", () => {
   beforeEach(async () => {
     vault = new FakeVault();
     backupWarnings = 0;
-    service = new TaskService(vault as never, "todo", undefined, () => { backupWarnings++; });
+    service = new TaskService(vault as never, "todo", undefined, () => { backupWarnings++; }, (tagId) => tagId === "urgent");
     await service.init();
   });
 
@@ -117,6 +117,44 @@ describe("TaskService integration", () => {
     await service.update(parent.id, { tags: ["new"] });
 
     expect(service.getById(child.id)?.tags).toEqual(["new"]);
+  });
+
+  it("keeps the inherited importance flag in sync when assigning a parent", async () => {
+    const parent = await service.create({ title: "Urgent goal", tags: ["urgent"], isImportant: false });
+    const child = await service.create({ title: "Daily task" });
+
+    await service.update(child.id, { parentId: parent.id });
+
+    expect(service.getById(child.id)).toMatchObject({ tags: ["urgent"], isImportant: true });
+    const persisted = JSON.parse(vault.adapter.files.get("todo/database.json")!);
+    expect(persisted.data.tasks.find((task: { id: string }) => task.id === child.id).isImportant).toBe(true);
+
+    await service.update(parent.id, { tags: ["ordinary"], isImportant: false });
+    expect(service.getById(child.id)).toMatchObject({ tags: ["ordinary"], isImportant: false });
+  });
+
+  it("repairs inherited importance on load without changing unrelated child flags", async () => {
+    const parent = createTask({ id: "parent", tags: ["urgent"], isImportant: false });
+    const inherited = createTask({ id: "inherited", parentId: parent.id, tags: ["urgent"] });
+    const custom = createTask({ id: "custom", parentId: parent.id, tags: ["other"] });
+    vault.adapter.files.set("todo/database.json", JSON.stringify({
+      meta: { dataVersion: 1, lastModified: "2026-11-16T00:00:00.000Z" },
+      data: { schemaVersion: 4, tasks: [parent, inherited, custom] },
+    }));
+
+    const reloaded = new TaskService(vault as never, "todo", undefined, undefined, (tagId) => tagId === "urgent");
+    await reloaded.init();
+
+    expect(reloaded.getById(inherited.id)?.isImportant).toBe(true);
+    expect(reloaded.getById(custom.id)?.isImportant).toBe(false);
+    const stored = JSON.parse(vault.adapter.files.get("todo/database.json")!);
+    expect(stored.data.schemaVersion).toBe(CURRENT_TASK_SCHEMA_VERSION);
+    expect(stored.data.tasks.find((task: { id: string }) => task.id === inherited.id).isImportant).toBe(true);
+
+    await reloaded.update(inherited.id, { isImportant: false });
+    const loadedAgain = new TaskService(vault as never, "todo");
+    await loadedAgain.init();
+    expect(loadedAgain.getById(inherited.id)?.isImportant).toBe(false);
   });
 
   it("soft deletes descendants and restores the parent", async () => {

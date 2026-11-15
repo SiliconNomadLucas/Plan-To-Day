@@ -35,6 +35,7 @@ export class TaskService extends PersistentJsonService {
     folder: string,
     recurrenceSeriesService?: RecurrenceSeriesService,
     notifyBackupFailure?: () => void,
+    private readonly isImportantTag: (tagId: string) => boolean = () => false,
   ) {
     super(vault, folder);
     this.notifyBackupFailure = notifyBackupFailure;
@@ -44,13 +45,13 @@ export class TaskService extends PersistentJsonService {
       () => this.save(),
       recurrenceSeriesService,
     );
-    this.hierarchyManager = new TaskHierarchyManager(() => this.tasks, () => this.save());
+    this.hierarchyManager = new TaskHierarchyManager(() => this.tasks, () => this.save(), isImportantTag);
   }
 
   async init(): Promise<void> {
     await this.initializeStore<unknown>(DB_FILENAME, async (db) => {
       if (db !== null) {
-        const migration = migrateTaskDatabase(db);
+        const migration = migrateTaskDatabase(db, this.isImportantTag);
         this.tasks = migration.tasks;
         await this.recurrenceManager.migrateLegacySources();
         if (migration.changed) await this.save();

@@ -7,6 +7,20 @@ import {
 } from "../src/services/TaskDatabaseMigrations";
 
 describe("task database migrations", () => {
+  it("repairs inherited importance once without touching unrelated child tags", () => {
+    const parent = createTask({ id: "parent", tags: ["urgent"], isImportant: false });
+    const inherited = createTask({ id: "inherited", parentId: parent.id, tags: ["urgent"] });
+    const custom = createTask({ id: "custom", parentId: parent.id, tags: ["other"] });
+
+    const migrated = migrateTaskDatabase({ schemaVersion: 4, tasks: [parent, inherited, custom] }, (tagId) => tagId === "urgent");
+
+    expect(migrated.changed).toBe(true);
+    expect(migrated.tasks.find((task) => task.id === inherited.id)?.isImportant).toBe(true);
+    expect(migrated.tasks.find((task) => task.id === custom.id)?.isImportant).toBe(false);
+    const current = migrateTaskDatabase({ schemaVersion: CURRENT_TASK_SCHEMA_VERSION, tasks: migrated.tasks });
+    expect(current.changed).toBe(false);
+  });
+
   it("upgrades an unversioned legacy task database", () => {
     const legacyTask: PersistedTask = {
       ...createTask({
