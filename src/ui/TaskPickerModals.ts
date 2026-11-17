@@ -78,14 +78,24 @@ export class ParentPickerModal extends Modal {
   private onSelect: (id: string) => void;
   private mode: "parent" | "child";
   private task: Task;
+  private restrictOrdinaryParentToCurrentWeek: boolean;
 
-  constructor(app: App, ts: Pick<TaskService, "getAll">, excludeIds: string[], onSelect: (id: string) => void, mode: "parent" | "child", task: Task) {
+  constructor(
+    app: App,
+    ts: Pick<TaskService, "getAll">,
+    excludeIds: string[],
+    onSelect: (id: string) => void,
+    mode: "parent" | "child",
+    task: Task,
+    restrictOrdinaryParentToCurrentWeek = false,
+  ) {
     super(app);
     this.ts = ts;
     this.excludeIds = excludeIds;
     this.onSelect = onSelect;
     this.mode = mode;
     this.task = task;
+    this.restrictOrdinaryParentToCurrentWeek = restrictOrdinaryParentToCurrentWeek;
   }
 
   onOpen(): void {
@@ -101,7 +111,7 @@ export class ParentPickerModal extends Modal {
     const isWeekPlanChildPicker = this.mode === "child" && this.task.planKind === "week";
     const targetKind = this.task.planKind
       ? (this.mode === "parent" ? PARENT_KIND[this.task.planKind] : CHILD_KIND[this.task.planKind])
-      : isOrdinaryParentPicker ? "week" : undefined;
+      : isOrdinaryParentPicker && this.restrictOrdinaryParentToCurrentWeek ? "week" : undefined;
     const renderList = (filter: string) => {
       listEl.empty();
       if (!targetKind && !isOrdinaryTask && !isWeekPlanChildPicker) {
@@ -112,6 +122,7 @@ export class ParentPickerModal extends Modal {
         if (t.isDeleted || t.isRecurrenceTemplate) return false;
         if (this.excludeIds.includes(t.id)) return false;
         if (targetKind && t.planKind !== targetKind) return false;
+        if (isOrdinaryParentPicker && !t.planKind) return false;
         if (isWeekPlanChildPicker && t.planKind) return false;
         // Period key matching
         if (this.mode === "parent" && this.task.planKind && targetKind !== "life") {
@@ -122,7 +133,7 @@ export class ParentPickerModal extends Modal {
           const candidateParentKey = getParentPeriodKey(targetKind as PlanKind, t.planPeriodKey || "");
           return candidateParentKey === this.task.planPeriodKey;
         }
-        if (isOrdinaryParentPicker) {
+        if (isOrdinaryParentPicker && this.restrictOrdinaryParentToCurrentWeek) {
           const dateStr = this.task.dueDate || this.task.startDate;
           if (dateStr) {
             const date = new Date(dateStr);

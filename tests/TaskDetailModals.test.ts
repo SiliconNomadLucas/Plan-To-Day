@@ -107,7 +107,7 @@ describe("extracted task detail modals", () => {
     expect(selected).toHaveBeenCalledWith("parent");
   });
 
-  it("limits an ordinary task's parent candidates to its matching weekly goal", () => {
+  it("allows a list task to choose any plan-level parent", () => {
     const weeklyGoal = createTask({
       id: "weekly-goal",
       title: "This week's goal",
@@ -149,11 +149,31 @@ describe("extracted task detail modals", () => {
     modal.open();
 
     expect(contentOf(modal).find((element) => element.textContent === "This week's goal")).toBeDefined();
-    expect(contentOf(modal).find((element) => element.textContent === "Another week's goal")).toBeUndefined();
-    expect(contentOf(modal).find((element) => element.textContent === "Year goal")).toBeUndefined();
+    expect(contentOf(modal).find((element) => element.textContent === "Another week's goal")).toBeDefined();
+    expect(contentOf(modal).find((element) => element.textContent === "Year goal")).toBeDefined();
     expect(contentOf(modal).find((element) => element.textContent === "Existing parent task")).toBeUndefined();
     expect(contentOf(modal).find((element) => element.textContent === "Deleted task")).toBeUndefined();
     contentOf(modal).find((element) => element.className.includes("todo-parent-picker-item"))!.trigger("click");
     expect(selected).toHaveBeenCalledWith("weekly-goal");
+  });
+
+  it("limits a My Day task's parent candidates to the matching weekly goal", () => {
+    const weeklyGoal = createTask({ id: "weekly-goal", title: "This week's goal", planKind: "week", planPeriodKey: "2026-W46" });
+    const yearlyGoal = createTask({ id: "yearly-goal", title: "Year goal", planKind: "year", planPeriodKey: "2026" });
+    const task = createTask({ dueDate: "2026-11-11T10:00:00" });
+    const modal = new ParentPickerModal(
+      {} as never,
+      { getAll: () => [weeklyGoal, yearlyGoal] },
+      [],
+      vi.fn(),
+      "parent",
+      task,
+      true,
+    );
+
+    modal.open();
+
+    expect(contentOf(modal).find((element) => element.textContent === "This week's goal")).toBeDefined();
+    expect(contentOf(modal).find((element) => element.textContent === "Year goal")).toBeUndefined();
   });
 });

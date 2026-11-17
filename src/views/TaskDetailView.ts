@@ -518,7 +518,7 @@ export class TaskDetailView {
       exclude.push(task.id);
       new ParentPickerModal(this.app, ts, exclude, (parentId) => {
         void this.saveChanges({ parentId });
-      }, "parent", task).open();
+      }, "parent", task, this.plugin.settings.activeViewNav === "myday" && !this.plugin.settings.selectedListId).open();
     });
     if (pt) {
       const item = section.createDiv({ cls: "todo-relation-item" });
