@@ -26,6 +26,14 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Sync release metadata with tag
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          current_version="$(node -p "require('./manifest.json').version")"
+          if [ "$current_version" != "$GITHUB_REF_NAME" ]; then
+            npm run version -- "$GITHUB_REF_NAME"
+          fi
+
       - name: Build, test, and validate release artifacts
         run: npm run release:check
 

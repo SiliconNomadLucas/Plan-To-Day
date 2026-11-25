@@ -45,9 +45,9 @@ Source layout: `src/models/` for data models, `src/services/` for persistence an
 
 ## Release process
 
-1. Run `npm run version -- <next-version>` with a version higher than the current one.
-2. Run `npm run release:check`, commit the changes, and push a tag that exactly matches the manifest version, without `v`.
-3. After CI passes, the release workflow creates a GitHub Release containing `main.js`, `manifest.json`, and `styles.css`.
+1. Commit and push the code to `main`.
+2. Push a new `major.minor.patch` tag (for example, `0.1.11`) to that commit, without a `v` prefix. Do not reuse an existing tag.
+3. The tag workflow syncs release metadata to the tag, runs the build, tests, and validation, then creates a GitHub Release containing `main.js`, `manifest.json`, and `styles.css`.
 
 Do not retag or replace an existing public release to publish new code.
 

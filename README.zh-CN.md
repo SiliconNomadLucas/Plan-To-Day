@@ -141,9 +141,9 @@ src/
 
 发布流程：
 
-1. 执行 `npm run version -- <next-version>`，传入高于当前版本的 `major.minor.patch` 版本号。
-2. 提交版本变更并推送与清单版本完全一致的标签（不带 `v`）。
-3. CI 通过后会自动创建 GitHub Release，并附上 `main.js`、`manifest.json` 和 `styles.css`。
+1. 将代码提交并推送到 `main`。
+2. 在该提交上推送一个新的 `major.minor.patch` 标签（例如 `0.1.11`，不带 `v` 前缀），不要重复使用已有标签。
+3. 标签工作流会自动将发布元数据同步为标签版本，然后执行构建、测试和校验；通过后自动创建 GitHub Release，并附上 `main.js`、`manifest.json` 和 `styles.css`。
 
 本地可用 `npm run release:check` 完整预演发布门禁。该命令不创建标签或发布版本。
 
