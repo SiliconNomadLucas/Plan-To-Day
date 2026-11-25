@@ -13,6 +13,7 @@ export interface ObsidianTodoSettings {
   language: TodoLanguage;
   todoFolder: string;
   defaultListName: string;
+  autoOpenOnStartup: boolean;
   logLevel: string;
   activeViewNav: ViewNav;
   selectedListId: string | null;
@@ -41,6 +42,7 @@ export const DEFAULT_SETTINGS: ObsidianTodoSettings = {
   language: "zh",
   todoFolder: "todo",
   defaultListName: "Tasks",
+  autoOpenOnStartup: false,
   logLevel: "ERROR",
   activeViewNav: "myday",
   selectedListId: null,
@@ -98,6 +100,7 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
         type: "group", heading: t("基本设置"), items: [
           { name: t("数据存储文件夹"), desc: t("任务数据文件存储在 Vault 中的文件夹路径"), control: { type: "text", key: "todoFolder", placeholder: "todo" } },
           { name: t("默认列表名称"), desc: t("首次运行时自动创建的默认列表名称"), control: { type: "text", key: "defaultListName", placeholder: "Tasks" } },
+          { name: t("启动时自动打开"), desc: t("Obsidian 启动后自动打开 Plan to Day 主视图，关闭时仍可从图标或命令手动打开"), control: { type: "toggle", key: "autoOpenOnStartup" } },
           { name: t("生日"), desc: t("用于人生计划视图计算年龄（格式：YYYY-MM-DD）"), render: (setting) => this.addBirthdayControl(setting) },
           { name: t("新手引导"), desc: t("查看插件功能介绍"), render: (setting) => {
             setting.addButton((button) => button.setButtonText(t("重新打开新手引导")).onClick(() => this.openOnboarding()));
@@ -147,6 +150,7 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
     switch (key) {
       case "todoFolder": return settings.todoFolder;
       case "defaultListName": return settings.defaultListName;
+      case "autoOpenOnStartup": return settings.autoOpenOnStartup;
       case "language": return settings.language;
       case "showLunarCalendar": return settings.showLunarCalendar;
       case "showDailyRecurringInDaySchedule": return settings.showDailyRecurringInDaySchedule;
@@ -171,7 +175,7 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
     } else if (key === "todoFolder" || key === "defaultListName") {
       if (typeof value !== "string") return;
       settings[key] = value;
-    } else if (key === "showLunarCalendar" || key === "showDailyRecurringInDaySchedule" || key === "showDailyRecurringInWeekSchedule" || key === "showDailyRecurringInMonthSchedule") {
+    } else if (key === "autoOpenOnStartup" || key === "showLunarCalendar" || key === "showDailyRecurringInDaySchedule" || key === "showDailyRecurringInWeekSchedule" || key === "showDailyRecurringInMonthSchedule") {
       if (typeof value !== "boolean") return;
       settings[key] = value;
     } else {
@@ -286,6 +290,16 @@ export class ObsidianTodoSettingTab extends PluginSettingTab {
               await this.plugin.saveSettings();
             })
         );
+
+      new Setting(group)
+        .setName(t("启动时自动打开"))
+        .setDesc(t("Obsidian 启动后自动打开 Plan to Day 主视图，关闭时仍可从图标或命令手动打开"))
+        .addToggle((toggle) => toggle
+          .setValue(this.plugin.settings.autoOpenOnStartup)
+          .onChange(async (value) => {
+            this.plugin.settings.autoOpenOnStartup = value;
+            await this.plugin.saveSettings();
+          }));
 
       const birthdaySetting = new Setting(group)
         .setName(t("生日"))

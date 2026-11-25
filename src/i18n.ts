@@ -142,6 +142,8 @@ const translations: Record<string, string> = {
   "任务数据文件存储在 Vault 中的文件夹路径": "Folder in the Vault where task data is stored",
   "默认列表名称": "Default list name",
   "首次运行时自动创建的默认列表名称": "Default list name created on first run",
+  "启动时自动打开": "Open automatically on startup",
+  "Obsidian 启动后自动打开 Plan to Day 主视图，关闭时仍可从图标或命令手动打开": "Automatically open the Plan to Day main view when Obsidian starts. The ribbon icon and command remain available when disabled.",
   "生日": "Birthday",
   "待办事项推荐": "Task suggestions",
   "新手引导": "Quick guide",

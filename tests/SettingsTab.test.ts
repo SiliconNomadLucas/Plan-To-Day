@@ -34,7 +34,7 @@ describe("settings tab compatibility", () => {
     const basic = groups[0];
     if (!("items" in basic)) throw new Error("Missing basic settings");
     expect(basic.items?.map((item) => "name" in item ? item.name : undefined))
-      .toEqual(["数据存储文件夹", "默认列表名称", "生日", "新手引导"]);
+      .toEqual(["数据存储文件夹", "默认列表名称", "启动时自动打开", "生日", "新手引导"]);
     const controls = groups.flatMap((group) => "items" in group ? group.items ?? [] : [])
       .filter((item) => "control" in item && item.control);
     for (const item of controls) {
@@ -48,14 +48,17 @@ describe("settings tab compatibility", () => {
     const update = vi.spyOn(tab, "update").mockImplementation(() => undefined);
 
     expect(tab.getControlValue("todoFolder")).toBe("todo");
+    expect(tab.getControlValue("autoOpenOnStartup")).toBe(false);
+    await tab.setControlValue("autoOpenOnStartup", true);
     await tab.setControlValue("showLunarCalendar", false);
     await tab.setControlValue("logLevel", "WARN");
     await tab.setControlValue("language", "en");
 
     expect(plugin.settings.showLunarCalendar).toBe(false);
+    expect(plugin.settings.autoOpenOnStartup).toBe(true);
     expect(plugin.settings.logLevel).toBe("WARN");
     expect(plugin.settings.language).toBe("en");
-    expect(plugin.saveSettings).toHaveBeenCalledTimes(3);
+    expect(plugin.saveSettings).toHaveBeenCalledTimes(4);
     expect(plugin.refreshLanguage).toHaveBeenCalledOnce();
     expect(update).toHaveBeenCalledOnce();
     expect(tab.getSettingDefinitions()[0]).toMatchObject({ heading: "Basic Settings" });

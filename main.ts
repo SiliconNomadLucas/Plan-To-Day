@@ -126,29 +126,32 @@ export default class ObsidianTodoPlugin extends Plugin {
     this.activatePlan = async (kind: PlanKind) => { if (this.todoView) await this.todoView.activatePlanFromExternal(kind); };
     this.showMobilePanel = (panel) => { if (this.todoView) this.todoView.showMobilePanelFromExternal(panel); };
 
-    // Auto-open sidebar nav and main view on startup
     this.app.workspace.onLayoutReady(async () => {
       if (this.unloading) return;
       if (this.dataSyncCoordinator) this.addChild(this.dataSyncCoordinator);
-      // The desktop view already contains its own navigation; the side navigation is mobile-only.
-      const isMobile = window.innerWidth <= 600 || document.body.hasClass("is-mobile");
-      if (isMobile) {
-        const navLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO_NAV);
-        if (!navLeaves.length) {
-          const navLeaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE_TODO_NAV, "left", { active: false, reveal: true });
-          if (navLeaf) {
-            await navLeaf.setViewState({ type: VIEW_TYPE_TODO_NAV, active: false });
-          }
-        }
-      } else {
-        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO_NAV)) {
-          leaf.detach();
-        }
-      }
-      // Open main todo view
-      await this.activateView();
+      await this.openStartupViews();
       if (this.shouldShowOnboarding()) this.openOnboarding();
     });
+  }
+
+  private async openStartupViews(): Promise<void> {
+    if (!this.settings.autoOpenOnStartup) return;
+    // The desktop view already contains its own navigation; the side navigation is mobile-only.
+    const isMobile = window.innerWidth <= 600 || document.body.hasClass("is-mobile");
+    if (isMobile) {
+      const navLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO_NAV);
+      if (!navLeaves.length) {
+        const navLeaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE_TODO_NAV, "left", { active: false, reveal: true });
+        if (navLeaf) {
+          await navLeaf.setViewState({ type: VIEW_TYPE_TODO_NAV, active: false });
+        }
+      }
+    } else {
+      for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO_NAV)) {
+        leaf.detach();
+      }
+    }
+    await this.activateView();
   }
 
   onunload(): void {
