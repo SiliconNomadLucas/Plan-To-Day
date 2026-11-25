@@ -2,6 +2,8 @@ import { Vault } from "obsidian";
 import { TodoList, createList } from "../models/List";
 import { PersistentJsonService } from "./PersistentJsonService";
 import { logger } from "../utils/logger";
+import type { ServiceReloadResult } from "../models/ServiceReloadResult";
+import { isRecord, stableSerialize } from "../utils/validation";
 
 export interface ListStore {
   lists: TodoList[];
@@ -13,6 +15,8 @@ export class ListService extends PersistentJsonService {
   private lists: TodoList[] = [];
   
   private defaultListName: string;
+  private persistedLists = "[]";
+  private saveFailed = false;
 
   
   constructor(vault: Vault, folder: string, defaultListName: string) {
@@ -30,13 +34,37 @@ export class ListService extends PersistentJsonService {
         logger.info("No existing lists, starting fresh");
       }
       await this.ensureDefaultList();
+      this.persistedLists = stableSerialize(this.lists);
+      this.saveFailed = false;
     });
   }
+  hasUnsavedChanges(): boolean {
+    this.ensureLoaded();
+    return this.saveFailed || stableSerialize(this.lists) !== this.persistedLists;
+  }
+
+  async reloadFromDisk(): Promise<ServiceReloadResult> {
+    this.ensureLoaded();
+    if (this.hasUnsavedChanges()) return { status: "deferred", reason: "unsaved-changes" };
+    const snapshot = await this.readStoreFromDisk(STORE_FILENAME);
+    if (this.hasUnsavedChanges()) return { status: "deferred", reason: "unsaved-changes" };
+    if (snapshot.status === "missing") return { status: "missing" };
+    if (!isRecord(snapshot.data) || !Array.isArray(snapshot.data.lists) || !snapshot.data.lists.every(isTodoList)) {
+      throw new Error("Invalid lists store: expected a valid lists array.");
+    }
+    const lists = snapshot.data.lists.map((list) => ({ ...list, tags: Array.isArray(list.tags) ? [...list.tags] : [] }));
+    if (stableSerialize(lists) === this.persistedLists) return { status: "unchanged" };
+    this.lists = lists;
+    this.persistedLists = stableSerialize(lists);
+    this.storage.clearCache();
+    return { status: "reloaded" };
+  }
+
 
   
   getActive(): TodoList[] {
     this.ensureLoaded();
-    return this.lists.sort((a, b) => a.sortOrder - b.sortOrder);
+    return [...this.lists].sort((a, b) => a.sortOrder - b.sortOrder);
   }
 
   
@@ -120,8 +148,15 @@ export class ListService extends PersistentJsonService {
   
 
   private async save(): Promise<void> {
-    const store: ListStore = { lists: this.lists };
-    await this.persistStore(STORE_FILENAME, store);
+    const lists = this.lists.map((list) => ({ ...list, tags: [...list.tags] }));
+    try {
+      await this.persistStore(STORE_FILENAME, { lists });
+      this.persistedLists = stableSerialize(lists);
+      this.saveFailed = false;
+    } catch (error) {
+      this.saveFailed = true;
+      throw error;
+    }
   }
 
   
@@ -142,4 +177,18 @@ export class ListService extends PersistentJsonService {
   private ensureLoaded(): void {
     this.ensureInitialized("ListService");
   }
+}
+
+function isTodoList(value: unknown): value is TodoList {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string"
+    && typeof value.name === "string"
+    && typeof value.sortOrder === "number"
+    && typeof value.isArchived === "boolean"
+    && typeof value.isDefault === "boolean"
+    && (typeof value.groupId === "string" || value.groupId === null)
+    && typeof value.icon === "string"
+    && (value.tags === undefined || (Array.isArray(value.tags) && value.tags.every((tag) => typeof tag === "string")))
+    && typeof value.createdAt === "string"
+    && typeof value.updatedAt === "string";
 }

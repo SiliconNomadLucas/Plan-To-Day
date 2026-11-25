@@ -36,6 +36,8 @@ export class TaskDetailView {
   private onOpen?: () => void;
   private historyStack: { taskId: string; title: string }[] = [];
   private scheduleSummary: { title: string; items: ScheduleSidebarItem[] } | null = null;
+  private displayedTitle = "";
+  private displayedNote = "";
 
   constructor(app: App, plugin: TodoPluginLike, root: HTMLElement, onTaskUpdated?: (taskId: string) => void, onClose?: () => void, onNavigateToTask?: (taskId: string) => void, onOpen?: () => void, onScheduleItemNavigate?: (taskId: string) => void) {
     this.app = app;
@@ -54,6 +56,29 @@ export class TaskDetailView {
 
   isActive(): boolean { return this.taskId !== null; }
   getTaskId(): string | null { return this.taskId; }
+
+  hasPendingEdits(): boolean {
+    if (this.pendingSave) return true;
+    if (!this.taskId || !this.root.hasClass("todo-detail-active") || this.root.hasClass("todo-ai-detail-panel")) return false;
+    return (this.titleInput?.value ?? this.displayedTitle) !== this.displayedTitle
+      || (this.noteInput?.value ?? this.displayedNote) !== this.displayedNote;
+  }
+
+  async refreshFromExternalChange(): Promise<boolean> {
+    if (!this.taskId || this.root.hasClass("todo-ai-detail-panel")) return true;
+    if (this.hasPendingEdits()) return false;
+    if (!this.getTask()) {
+      this.historyStack = [];
+      this.plugin.settings.selectedTaskId = null;
+      this.close();
+      this.onClose?.();
+      return true;
+    }
+    const scroll = this.root.scrollTop;
+    await this.renderCurrentTask();
+    this.root.scrollTop = scroll;
+    return true;
+  }
 
   open(taskId: string): void {
     this.scheduleSummary = null;
@@ -194,6 +219,7 @@ export class TaskDetailView {
     const titleRow = this.root.createDiv({ cls: "todo-detail-title-row" });
     this.titleInput = titleRow.createEl("input", { cls: "todo-detail-title-input", attr: { type: "text", placeholder: "任务标题" } });
     this.titleInput.value = task.title || "";
+    this.displayedTitle = this.titleInput.value;
     const starBtn = titleRow.createDiv({ cls: "todo-detail-star" + (task.isImportant ? " is-important" : "") });
     setIcon(starBtn, "star");
     starBtn.addEventListener("click", () => void this.toggleImportant(starBtn));
@@ -218,6 +244,7 @@ export class TaskDetailView {
     noteLabel.createSpan({ text: " 备注" });
     this.noteInput = noteSection.createEl("textarea", { cls: "todo-detail-textarea", attr: { rows: "2" } });
     this.noteInput.value = task.note || "";
+    this.displayedNote = this.noteInput.value;
     this.noteInput.addEventListener("focus", (ev) => { runAsyncAction((async () => {
       if (window.innerWidth <= 600) {
         ev.preventDefault();
@@ -491,8 +518,15 @@ export class TaskDetailView {
 
   private applyValues(task: Task): void {
     if (!this.root.hasClass("todo-detail-active")) return;
-    this.titleInput.value = task.title || "";
-    this.noteInput.value = task.note || "";
+    // A save can finish after the user has started editing another field.
+    if (this.titleInput.value === this.displayedTitle || this.titleInput.value.trim() === task.title) {
+      this.titleInput.value = task.title || "";
+      this.displayedTitle = this.titleInput.value;
+    }
+    if (this.noteInput.value === this.displayedNote || this.noteInput.value === task.note) {
+      this.noteInput.value = task.note || "";
+      this.displayedNote = this.noteInput.value;
+    }
     const starBtn = this.root.querySelector<HTMLElement>(".todo-detail-star");
     if (starBtn) this.updateStarState(starBtn, task.isImportant);
     // Refresh property rows
@@ -778,8 +812,9 @@ export class TaskDetailView {
         await this.plugin.taskService.syncRecurrenceProperties(taskId, changes);
       }
       if (updated && this.taskId === taskId) this.applyValues(updated);
-      if (this.pendingSave === p) this.pendingSave = null;
       this.onTaskUpdated?.(taskId);
+    }).finally(() => {
+      if (this.pendingSave === p) this.pendingSave = null;
     });
     this.pendingSave = p;
     return p;

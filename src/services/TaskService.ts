@@ -1,7 +1,9 @@
 import { Vault } from "obsidian";
 import { Task, PlanKind, createTask } from "../models/Task";
+import type { ServiceReloadResult } from "../models/ServiceReloadResult";
 import { PersistentJsonService } from "./PersistentJsonService";
 import { logger } from "../utils/logger";
+import { isRecord } from "../utils/validation";
 import { localTodayStr } from "../utils/period";
 import type { RecurrenceSeriesService } from "./RecurrenceSeriesService";
 import { RecurrenceTaskManager } from "./RecurrenceTaskManager";
@@ -29,6 +31,8 @@ export class TaskService extends PersistentJsonService {
   private hierarchyManager: TaskHierarchyManager;
   private backupFailureNotified = false;
   private notifyBackupFailure?: () => void;
+  private persistedTasks = "[]";
+  private saveFailed = false;
 
   constructor(
     vault: Vault,
@@ -49,19 +53,62 @@ export class TaskService extends PersistentJsonService {
   }
 
   async init(): Promise<void> {
+    return this.runExclusive(() => this.initialize());
+  }
+
+  private async initialize(): Promise<void> {
     await this.initializeStore<unknown>(DB_FILENAME, async (db) => {
       if (db !== null) {
         const migration = migrateTaskDatabase(db, this.isImportantTag);
         this.tasks = migration.tasks;
+        this.persistedTasks = this.taskFingerprint(this.tasks);
+        this.saveFailed = false;
         await this.recurrenceManager.migrateLegacySources();
         if (migration.changed) await this.save();
         logger.info("Loaded", this.tasks.length, "tasks");
       } else {
         this.tasks = [];
+        this.persistedTasks = "[]";
+        this.saveFailed = false;
         logger.info("No existing tasks, starting fresh");
       }
     });
     if (this.tasks.length > 0) await this.recurrenceManager.ensureInstances();
+  }
+
+  hasUnsavedChanges(): boolean {
+    this.ensureLoaded();
+    return this.saveFailed || this.taskFingerprint(this.tasks) !== this.persistedTasks;
+  }
+
+  async retrySave(): Promise<void> {
+    return this.runExclusive(async () => {
+      this.ensureLoaded();
+      if (this.hasUnsavedChanges()) await this.save();
+    });
+  }
+
+  async reloadFromDisk(): Promise<ServiceReloadResult> {
+    return this.runExclusive(async () => {
+      this.ensureLoaded();
+      if (this.hasUnsavedChanges()) return { status: "deferred", reason: "unsaved-changes" };
+
+      const snapshot = await this.readStoreFromDisk(DB_FILENAME);
+      // Query methods expose task references, so a caller can edit one during the disk read.
+      if (this.hasUnsavedChanges()) return { status: "deferred", reason: "unsaved-changes" };
+      if (snapshot.status === "missing") {
+        return this.tasks.length === 0 ? { status: "unchanged" } : { status: "missing" };
+      }
+
+      const migration = migrateTaskDatabase(snapshot.data, this.isImportantTag);
+      const fingerprint = this.taskFingerprint(migration.tasks);
+      if (fingerprint === this.persistedTasks) return { status: "unchanged" };
+
+      this.tasks = migration.tasks;
+      this.persistedTasks = fingerprint;
+      this.storage.clearCache();
+      return { status: "reloaded" };
+    });
   }
 
   // ===== 查询方法（默认排除已删除）=====
@@ -129,6 +176,11 @@ export class TaskService extends PersistentJsonService {
   // ===== CRUD 操作 =====
 
   async create(fields: Partial<Task>): Promise<Task> {
+    const snapshot = this.cloneTask(fields);
+    return this.runExclusive(() => this.createInternal(snapshot));
+  }
+
+  private async createInternal(fields: Partial<Task>): Promise<Task> {
     this.ensureLoaded();
     const task = createTask(fields);
     this.tasks.push(task);
@@ -138,6 +190,11 @@ export class TaskService extends PersistentJsonService {
   }
 
   async update(id: string, changes: Partial<Task>): Promise<Task | null> {
+    const snapshot = this.cloneTask(changes);
+    return this.runExclusive(() => this.updateInternal(id, snapshot));
+  }
+
+  private async updateInternal(id: string, changes: Partial<Task>): Promise<Task | null> {
     this.ensureLoaded();
     const index = this.tasks.findIndex((t) => t.id === id);
     if (index === -1) {
@@ -184,27 +241,36 @@ export class TaskService extends PersistentJsonService {
       await this.hierarchyManager.uncompleteAncestors(updated.parentId);
     }
 
-    return this.tasks[index];
+    return this.tasks.find((task) => task.id === id) ?? null;
   }
 
   /** 将重复任务当前实例的时间同步到未来未完成实例，保留每个实例自己的日期。 */
   async syncRecurrenceSchedule(taskId: string, startDate: string | null, dueDate: string | null): Promise<number> {
-    this.ensureLoaded();
-    return this.recurrenceManager.syncSchedule(taskId, startDate, dueDate);
+    return this.runExclusive(() => {
+      this.ensureLoaded();
+      return this.recurrenceManager.syncSchedule(taskId, startDate, dueDate);
+    });
   }
 
   /** 将重复任务的系列属性同步到未来未完成实例，不修改每个实例自己的日期或完成状态。 */
   async syncRecurrenceProperties(taskId: string, changes: Partial<Task>): Promise<number> {
-    this.ensureLoaded();
-    return this.recurrenceManager.syncProperties(taskId, changes);
+    const snapshot = this.cloneTask(changes);
+    return this.runExclusive(() => {
+      this.ensureLoaded();
+      return this.recurrenceManager.syncProperties(taskId, snapshot);
+    });
   }
 
   async complete(id: string): Promise<Task | null> {
+    return this.runExclusive(() => this.completeInternal(id));
+  }
+
+  private async completeInternal(id: string): Promise<Task | null> {
     this.ensureLoaded();
     const task = this.tasks.find(t => t.id === id);
     if (!task) return null;
 
-    const result = await this.update(id, {
+    const result = await this.updateInternal(id, {
       isCompleted: true,
       completedAt: new Date().toISOString(),
     });
@@ -226,6 +292,10 @@ export class TaskService extends PersistentJsonService {
 
   // 软删除
   async delete(id: string): Promise<boolean> {
+    return this.runExclusive(() => this.deleteInternal(id));
+  }
+
+  private async deleteInternal(id: string): Promise<boolean> {
     this.ensureLoaded();
     const task = this.tasks.find((t) => t.id === id);
     if (!task) {
@@ -239,7 +309,7 @@ export class TaskService extends PersistentJsonService {
     // 软删除子任务
     const children = this.tasks.filter((t) => t.parentId === id && !t.isDeleted);
     for (const child of children) {
-      await this.delete(child.id);
+      await this.deleteInternal(child.id);
     }
     await this.save();
     logger.info("Task soft deleted:", task.title);
@@ -248,57 +318,65 @@ export class TaskService extends PersistentJsonService {
 
   // 恢复任务
   async restore(id: string): Promise<boolean> {
-    this.ensureLoaded();
-    const task = this.tasks.find((t) => t.id === id);
-    if (!task || !task.isDeleted) {
-      logger.warn("Task not found or not deleted:", id);
-      return false;
-    }
-    task.isDeleted = false;
-    task.deletedAt = null;
-    task.updatedAt = new Date().toISOString();
-    await this.save();
-    logger.info("Task restored:", task.title);
-    return true;
+    return this.runExclusive(async () => {
+      this.ensureLoaded();
+      const task = this.tasks.find((t) => t.id === id);
+      if (!task || !task.isDeleted) {
+        logger.warn("Task not found or not deleted:", id);
+        return false;
+      }
+      task.isDeleted = false;
+      task.deletedAt = null;
+      task.updatedAt = new Date().toISOString();
+      await this.save();
+      logger.info("Task restored:", task.title);
+      return true;
+    });
   }
 
   // 清空回收站
   async emptyTrash(): Promise<number> {
-    this.ensureLoaded();
-    const deletedTasks = this.tasks.filter(t => t.isDeleted);
-    const count = deletedTasks.length;
-    this.tasks = this.tasks.filter(t => !t.isDeleted);
-    if (count > 0) {
-      await this.save();
-      logger.info("Trash emptied:", count, "tasks removed");
-    }
-    return count;
+    return this.runExclusive(async () => {
+      this.ensureLoaded();
+      const deletedTasks = this.tasks.filter(t => t.isDeleted);
+      const count = deletedTasks.length;
+      this.tasks = this.tasks.filter(t => !t.isDeleted);
+      if (count > 0) {
+        await this.save();
+        logger.info("Trash emptied:", count, "tasks removed");
+      }
+      return count;
+    });
   }
   // 彻底删除任务（硬删除）
   async hardDelete(id: string): Promise<boolean> {
-    this.ensureLoaded();
-    const index = this.tasks.findIndex((t) => t.id === id);
-    if (index === -1) {
-      logger.warn("Task not found for hard delete:", id);
-      return false;
-    }
-    const removed = this.tasks.splice(index, 1)[0];
-    await this.save();
-    logger.info("Task hard deleted:", removed.title);
-    return true;
+    return this.runExclusive(async () => {
+      this.ensureLoaded();
+      const index = this.tasks.findIndex((t) => t.id === id);
+      if (index === -1) {
+        logger.warn("Task not found for hard delete:", id);
+        return false;
+      }
+      const removed = this.tasks.splice(index, 1)[0];
+      await this.save();
+      logger.info("Task hard deleted:", removed.title);
+      return true;
+    });
   }
 
 
   // 清空所有任务
   async clearAll(): Promise<number> {
-    this.ensureLoaded();
-    const count = this.tasks.length;
-    this.tasks = [];
-    if (count > 0) {
-      await this.save();
-      logger.info("All tasks cleared:", count);
-    }
-    return count;
+    return this.runExclusive(async () => {
+      this.ensureLoaded();
+      const count = this.tasks.length;
+      this.tasks = [];
+      if (count > 0) {
+        await this.save();
+        logger.info("All tasks cleared:", count);
+      }
+      return count;
+    });
   }
 
 
@@ -321,14 +399,18 @@ export class TaskService extends PersistentJsonService {
 
   /** 在视图打开或跨日刷新时调用，修复已经耗尽的重复实例窗口。 */
   async refreshRecurrenceInstances(): Promise<number> {
-    this.ensureLoaded();
-    return this.recurrenceManager.ensureInstances();
+    return this.runExclusive(() => {
+      this.ensureLoaded();
+      return this.recurrenceManager.ensureInstances();
+    });
   }
 
   /** 设置重复规则。用户任务会转为内部模板，同时生成一个带日期的可执行实例。 */
   async setRecurrence(taskId: string, recurrence: string | null, endDate?: string | null): Promise<void> {
-    this.ensureLoaded();
-    return this.recurrenceManager.setRecurrence(taskId, recurrence, endDate);
+    return this.runExclusive(() => {
+      this.ensureLoaded();
+      return this.recurrenceManager.setRecurrence(taskId, recurrence, endDate);
+    });
   }
 
   /**
@@ -337,8 +419,10 @@ export class TaskService extends PersistentJsonService {
    * 不依赖用户是否完成了足够多的旧实例。
    */
   async replenishInstances(groupId: string): Promise<number> {
-    this.ensureLoaded();
-    return this.recurrenceManager.replenishInstances(groupId);
+    return this.runExclusive(() => {
+      this.ensureLoaded();
+      return this.recurrenceManager.replenishInstances(groupId);
+    });
   }
 
   /**
@@ -363,34 +447,65 @@ export class TaskService extends PersistentJsonService {
    * @returns 删除的数量
    */
   async deleteSeries(groupId: string, taskId?: string): Promise<number> {
-    this.ensureLoaded();
-    return this.recurrenceManager.deleteSeries(groupId, taskId);
+    return this.runExclusive(() => {
+      this.ensureLoaded();
+      return this.recurrenceManager.deleteSeries(groupId, taskId);
+    });
   }
 
   /**
    * 停止重复（保留已有实例，不再生成新的）
    */
   async stopRecurrence(groupId: string, fromTaskId?: string): Promise<number> {
-    this.ensureLoaded();
-    return this.recurrenceManager.stopRecurrence(groupId, fromTaskId);
+    return this.runExclusive(() => {
+      this.ensureLoaded();
+      return this.recurrenceManager.stopRecurrence(groupId, fromTaskId);
+    });
   }
 
 
   private async save(): Promise<void> {
+    const tasks = this.tasks.map((task) => this.cloneTask(task));
+    const fingerprint = this.taskFingerprint(tasks);
     const db: TaskDatabase = {
       schemaVersion: CURRENT_TASK_SCHEMA_VERSION,
-      tasks: this.tasks,
+      tasks,
     };
-    const backupResult = await this.storage.backup(DB_FILENAME);
-    if (backupResult === "failed") {
-      if (!this.backupFailureNotified) {
-        this.notifyBackupFailure?.();
-        this.backupFailureNotified = true;
+    try {
+      const backupResult = await this.storage.backup(DB_FILENAME);
+      if (backupResult === "failed") {
+        if (!this.backupFailureNotified) {
+          this.notifyBackupFailure?.();
+          this.backupFailureNotified = true;
+        }
+      } else {
+        this.backupFailureNotified = false;
       }
-    } else {
-      this.backupFailureNotified = false;
+      await this.persistStore(DB_FILENAME, db);
+      this.persistedTasks = fingerprint;
+      this.saveFailed = false;
+    } catch (error) {
+      this.saveFailed = true;
+      throw error;
     }
-    await this.persistStore(DB_FILENAME, db);
+  }
+
+  private cloneTask<T extends Partial<Task>>(task: T): T {
+    const copy = { ...task };
+    if (copy.tags) copy.tags = [...copy.tags];
+    if (copy.relatedPaths) copy.relatedPaths = [...copy.relatedPaths];
+    if (copy.relatedFolders) copy.relatedFolders = [...copy.relatedFolders];
+    return copy;
+  }
+
+  private taskFingerprint(tasks: Task[]): string {
+    // JSON object key order and storage metadata do not change the task data.
+    return JSON.stringify(tasks, (_key: string, value: unknown) => {
+      if (!isRecord(value)) return value;
+      const sorted: Record<string, unknown> = {};
+      for (const key of Object.keys(value).sort()) sorted[key] = value[key];
+      return sorted;
+    });
   }
 
   private ensureLoaded(): void {

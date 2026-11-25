@@ -13,6 +13,9 @@ import { ListService } from "./src/services/ListService";
 import { TagService } from "./src/services/TagService";
 import { GroupService } from "./src/services/GroupService";
 import { RecurrenceSeriesService } from "./src/services/RecurrenceSeriesService";
+import { DataSyncCoordinator } from "./src/services/DataSyncCoordinator";
+import type { DataSyncReloadResult } from "./src/models/DataSyncReloadResult";
+import type { SyncDataFile } from "./src/models/SyncDataFile";
 
 import { TodoView, VIEW_TYPE_TODO } from "./src/views/TodoView";
 import { TodoNavView, VIEW_TYPE_TODO_NAV } from "./src/views/TodoNavView";
@@ -41,6 +44,8 @@ export default class ObsidianTodoPlugin extends Plugin {
   showMobilePanel?: (panel: "nav" | "main" | "detail") => void;
   private recurrenceRefreshInFlight = false;
   private freshInstall = false;
+  private dataSyncCoordinator?: DataSyncCoordinator;
+  private unloading = false;
 
   async onload(): Promise<void> {
     await this.loadSettings();
@@ -77,6 +82,13 @@ export default class ObsidianTodoPlugin extends Plugin {
     this.groupService = new GroupService(this.app.vault, this.settings.todoFolder);
     await this.groupService.init();
     this.statsService = new StatsService(this.taskService, this.tagService, this.listService);
+    this.dataSyncCoordinator = new DataSyncCoordinator(
+      this.app.vault,
+      this.settings.todoFolder,
+      (files) => this.reloadSyncedData(files),
+      () => this.refreshSyncedViews(),
+      () => this.canRefreshSyncedViews(),
+    );
 
     this.addSettingTab(new ObsidianTodoSettingTab(this.app, this));
     this.registerView(VIEW_TYPE_TODO, (leaf) => new TodoView(leaf, this));
@@ -116,6 +128,8 @@ export default class ObsidianTodoPlugin extends Plugin {
 
     // Auto-open sidebar nav and main view on startup
     this.app.workspace.onLayoutReady(async () => {
+      if (this.unloading) return;
+      if (this.dataSyncCoordinator) this.addChild(this.dataSyncCoordinator);
       // The desktop view already contains its own navigation; the side navigation is mobile-only.
       const isMobile = window.innerWidth <= 600 || document.body.hasClass("is-mobile");
       if (isMobile) {
@@ -138,11 +152,21 @@ export default class ObsidianTodoPlugin extends Plugin {
   }
 
   onunload(): void {
+    this.unloading = true;
     logger.info("Plan to Day unloaded");
   }
 
   /** 全部重置：清空内存数据 → 删除磁盘文件（绕过 Vault 缓存）→ 重新初始化 → 刷新视图 */
   async resetAllData(): Promise<void> {
+    await this.dataSyncCoordinator?.pause();
+    try {
+      await this.resetAllDataWhileSyncPaused();
+    } finally {
+      this.dataSyncCoordinator?.resume();
+    }
+  }
+
+  private async resetAllDataWhileSyncPaused(): Promise<void> {
     const folder = this.settings.todoFolder;
     const dataFiles = ["database.json", "lists.json", "tags.json", "groups.json", "recurrence-series.json"];
 
@@ -196,6 +220,59 @@ export default class ObsidianTodoPlugin extends Plugin {
         return;
       }
     }
+  }
+
+  private canRefreshSyncedViews(): boolean {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO);
+    return !document.querySelector(".modal-container") && leaves.every((leaf) =>
+      !(leaf.view instanceof TodoView) || leaf.view.canRefreshFromExternalChange(),
+    );
+  }
+
+  private async reloadSyncedData(files: readonly SyncDataFile[]): Promise<DataSyncReloadResult> {
+    const reloaders = [
+      ["recurrence-series.json", () => this.recurrenceSeriesService.reloadFromDisk()],
+      ["tags.json", () => this.tagService.reloadFromDisk()],
+      ["groups.json", () => this.groupService.reloadFromDisk()],
+      ["lists.json", () => this.listService.reloadFromDisk()],
+      ["database.json", () => this.taskService.reloadFromDisk()],
+    ] as const satisfies readonly [SyncDataFile, () => Promise<{ status: string }>][];
+    const requested = new Set(files);
+    const retryFiles: SyncDataFile[] = [];
+    let changed = false;
+
+    for (const [file, reload] of reloaders) {
+      if (!requested.has(file)) continue;
+      try {
+        const result = await reload();
+        if (result.status === "reloaded") changed = true;
+        else if (result.status === "missing" || result.status === "deferred") retryFiles.push(file);
+      } catch (error) {
+        logger.warn("Failed to reload synced data file:", file, error);
+        retryFiles.push(file);
+      }
+    }
+
+    return {
+      status: changed ? "reloaded" : retryFiles.length > 0 ? "deferred" : "unchanged",
+      retryFiles,
+    };
+  }
+
+  private async refreshSyncedViews(): Promise<boolean> {
+    if (this.unloading) return true;
+    if (!this.canRefreshSyncedViews()) return false;
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO)) {
+      if (leaf.view instanceof TodoView && !(await leaf.view.refreshFromExternalChange())) return false;
+    }
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO_NAV)) {
+      if (leaf.view instanceof TodoNavView) {
+        const scroll = leaf.view.contentEl.scrollTop;
+        await leaf.view.renderNav();
+        leaf.view.contentEl.scrollTop = scroll;
+      }
+    }
+    return true;
   }
 
   async refreshLanguage(): Promise<void> {
@@ -253,6 +330,24 @@ export default class ObsidianTodoPlugin extends Plugin {
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  async onExternalSettingsChange(): Promise<void> {
+    const savedSettings: unknown = await this.loadData();
+    if (this.unloading || !isRecord(savedSettings)) return;
+    // Only reconcile list selection here; other navigation keeps its existing behavior.
+    const currentListId = this.settings.selectedListId;
+    if (currentListId && this.listService.getById(currentListId)) return;
+    const syncedListId = savedSettings.selectedListId;
+    if (typeof syncedListId === "string" && this.listService.getById(syncedListId)) {
+      this.settings.selectedListId = syncedListId;
+      this.settings.activeViewNav = "all";
+      await this.refreshView();
+    } else if (currentListId) {
+      this.settings.selectedListId = null;
+      this.settings.activeViewNav = "all";
+      await this.refreshView();
+    }
   }
 
   openOnboarding(): void {

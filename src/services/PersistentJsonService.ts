@@ -1,9 +1,11 @@
 import { Vault } from "obsidian";
+import type { StorageReadResult } from "../models/StorageReadResult";
 import { StorageService } from "./StorageService";
 
 export abstract class PersistentJsonService {
   protected readonly storage: StorageService;
   private initialized = false;
+  private operationQueue: Promise<void> = Promise.resolve();
 
   protected constructor(vault: Vault, folder: string) {
     this.storage = new StorageService(vault, folder);
@@ -21,6 +23,17 @@ export abstract class PersistentJsonService {
 
   protected persistStore<T>(filename: string, data: T): Promise<void> {
     return this.storage.write(filename, data);
+  }
+
+  protected readStoreFromDisk(filename: string): Promise<StorageReadResult> {
+    return this.storage.readFresh(filename);
+  }
+
+  // Public entry points enqueue once; nested work must stay inside the current operation.
+  protected runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const next = this.operationQueue.then(operation);
+    this.operationQueue = next.then(() => undefined, () => undefined);
+    return next;
   }
 
   protected ensureInitialized(serviceName: string): void {

@@ -309,6 +309,8 @@ export class TodoView extends ItemView {
   private _onTouchStart: ((ev: TouchEvent) => void) | null = null;
   private _onTouchEnd: ((ev: TouchEvent) => void) | null = null;
   private scheduleScrollTarget: "now" | { taskId: string } | "preserve" = "now";
+  private externalRefreshReady = false;
+  private viewClosed = false;
 
   constructor(leaf: WorkspaceLeaf, plugin: TodoPluginLike) {
     super(leaf);
@@ -405,6 +407,8 @@ export class TodoView extends ItemView {
   }
 
   async onOpen(): Promise<void> {
+    this.viewClosed = false;
+    this.externalRefreshReady = false;
     await this.plugin.taskService.refreshRecurrenceInstances();
     const container = this.containerEl.children[1];
     container.empty();
@@ -544,16 +548,12 @@ export class TodoView extends ItemView {
     ];
     for (const qd of quadrantDefs) {
       const qItem = qList.createDiv({ cls: "todo-nav-item todo-quadrant-item" + (this.plugin.settings.selectedQuadrant === qd.key ? " active" : "") });
+      qItem.dataset.quadrant = qd.key;
       const qdIcon = qItem.createSpan({ cls: "todo-nav-icon" });
       setIcon(qdIcon, qd.icon);
       qItem.createSpan({ cls: "todo-quadrant-name", text: qd.key });
       qItem.addEventListener("click", () => { runAsyncAction((async () => {
-        this.plugin.settings.selectedQuadrant = qd.key;
-        this.plugin.settings.activeViewNav = "all";
-        this.plugin.settings.activePlanKind = null;
-        this.activePlanKind = null;
-        await this.plugin.saveSettings();
-        this.plugin.settings.selectedListId = null;
+        await this.selectQuadrant(qd.key);
         qList.querySelectorAll(".todo-nav-item").forEach((el) => el.removeClass("active"));
         this.planGroupEl?.querySelectorAll(".todo-plan-item").forEach((el) => el.removeClass("active"));
 
@@ -674,7 +674,7 @@ export class TodoView extends ItemView {
 
     // Restore persisted plan state before navigation normalizes the view.
     this.activePlanKind = this.plugin.settings.activePlanKind || null;
-    await this.activateNav(this.plugin.settings.activeViewNav);
+    await this.restoreNavigation();
     await this.renderLists();
 
     // T-703: Global drag handlers
@@ -683,6 +683,7 @@ export class TodoView extends ItemView {
     document.addEventListener("mousemove", this._onDragMove);
     document.addEventListener("mouseup", this._onDragEnd);
     localizeDom(this.containerEl);
+    this.externalRefreshReady = true;
   }
 
   private async openAIBar(): Promise<void> {
@@ -728,6 +729,8 @@ export class TodoView extends ItemView {
   }
 
   async onClose(): Promise<void> {
+    this.viewClosed = true;
+    this.externalRefreshReady = false;
     if (this.timeLineTimer) { window.clearInterval(this.timeLineTimer); this.timeLineTimer = null; }
     if (this._onDragMove) document.removeEventListener("mousemove", this._onDragMove);
     if (this._onDragEnd) document.removeEventListener("mouseup", this._onDragEnd);
@@ -737,12 +740,88 @@ export class TodoView extends ItemView {
     this.containerEl.empty();
   }
 
+  canRefreshFromExternalChange(): boolean {
+    if (this.viewClosed) return true;
+    if (!this.externalRefreshReady || this.dragState || this.detailView?.hasPendingEdits()) return false;
+    const doc = this.containerEl.ownerDocument;
+    const active = doc.activeElement;
+    if (doc.querySelector(".modal-container")) return false;
+    if (active && active !== this.quickInputEl && active.matches("input, textarea, select, [contenteditable='true']")
+      && (this.containerEl.contains(active) || this.mobileDetailRoot?.contains(active))) return false;
+    return !this.containerEl.querySelector(".dragging, .todo-plan-inline-input, .todo-goal-subgroup-inline-input, .todo-list-rename-input");
+  }
+
+  async refreshFromExternalChange(): Promise<boolean> {
+    if (this.viewClosed) return true;
+    if (!this.canRefreshFromExternalChange()) return false;
+    const scroll = this.taskListEl.scrollTop;
+    const listScroll = this.listItemsEl?.scrollTop ?? 0;
+    const nestedScroll = [".todo-time-grid", ".todo-schedule-week-grid", ".todo-review-content", ".todo-goal-scroll-content", ".todo-goal-quarter-scroll"]
+      .map((selector) => {
+        const element = this.taskListEl.querySelector<HTMLElement>(selector);
+        return { selector, top: element?.scrollTop ?? 0, left: element?.scrollLeft ?? 0 };
+      });
+    const planGroups = new Map<string, boolean>();
+    this.taskListEl.querySelectorAll<HTMLElement>(".todo-plan-group-body").forEach((body) => {
+      if (body.dataset.periodKey) planGroups.set(body.dataset.periodKey, body.hasClass("todo-is-hidden"));
+    });
+
+    if (this.plugin.settings.selectedListId && !this.plugin.listService.getById(this.plugin.settings.selectedListId)) {
+      this.plugin.settings.selectedListId = null;
+    }
+    await this.renderLists();
+    if (this.viewClosed) return true;
+    if (this.listItemsEl) this.listItemsEl.scrollTop = listScroll;
+    const nav = this.plugin.settings.activeViewNav;
+    if (nav === "schedule") {
+      this.scheduleScrollTarget = "preserve";
+      this.renderScheduleView();
+      this.refreshScheduleSidebarIfOpen();
+    } else if (nav === "review") {
+      this.renderReviewView();
+    } else if (nav === "trash") {
+      this.renderTrashView();
+    } else if (nav === "plan" && (this.activePlanKind === "year" || this.activePlanKind === "month")) {
+      await this.renderGoalDashboard(this.activePlanKind, true);
+    } else if (nav === "plan" && this.activePlanKind === "life") {
+      await this.renderLifePlanView(true);
+    } else {
+      await this.renderTasks(this.plugin.settings.selectedListId ? "list" : nav);
+    }
+    if (this.viewClosed) return true;
+    this.taskListEl.querySelectorAll<HTMLElement>(".todo-plan-group-body").forEach((body) => {
+      const hidden = body.dataset.periodKey ? planGroups.get(body.dataset.periodKey) : undefined;
+      if (hidden === undefined) return;
+      body.toggleClass("todo-is-hidden", hidden);
+      body.parentElement?.querySelector(".todo-plan-group-arrow")?.toggleClass("collapsed", hidden);
+    });
+    this.taskListEl.scrollTop = scroll;
+    for (const position of nestedScroll) {
+      const element = this.taskListEl.querySelector<HTMLElement>(position.selector);
+      if (element) { element.scrollTop = position.top; element.scrollLeft = position.left; }
+    }
+    this.updateHeaderInfo();
+    if (nav !== "schedule" && nav !== "review" && nav !== "trash") this.updateQuickPlaceholder();
+    const selectedId = this.plugin.settings.selectedTaskId;
+    if (selectedId && !this.plugin.taskService.getAll().some((task) => task.id === selectedId)) {
+      this.plugin.settings.selectedTaskId = null;
+    }
+    if (this.plugin.settings.selectedTaskId) this.highlightSelectedTask(this.plugin.settings.selectedTaskId);
+    if (!(await this.detailView.refreshFromExternalChange())) return false;
+    localizeDom(this.containerEl);
+    return true;
+  }
+
   /** 外部调用：刷新整个视图（设置页清空/重置后使用） */
   async refreshAll(): Promise<void> {
     try {
       this.closeDetail();
-      this.plugin.settings.selectedListId = null;
       this.plugin.settings.selectedTaskId = null;
+      if (this.plugin.settings.selectedListId || this.plugin.settings.selectedQuadrant) {
+        await this.restoreNavigation();
+        localizeDom(this.containerEl);
+        return;
+      }
       const nav = this.plugin.settings.activeViewNav;
       if (nav === "schedule") {
         this.taskListEl.empty();
@@ -1027,6 +1106,39 @@ export class TodoView extends ItemView {
     this.showMobilePanel(panel);
   }
 
+  private async selectQuadrant(quadrant: string): Promise<void> {
+    this.plugin.settings.selectedQuadrant = quadrant;
+    this.plugin.settings.activeViewNav = "all";
+    this.plugin.settings.selectedListId = null;
+    this.plugin.settings.activePlanKind = null;
+    this.activePlanKind = null;
+    await this.plugin.saveSettings();
+  }
+
+  private async restoreNavigation(): Promise<void> {
+    const listId = this.plugin.settings.selectedListId;
+    if (listId && this.plugin.listService.getById(listId)) {
+      await this.activateList(listId);
+      await this.renderLists();
+      return;
+    }
+    if (!listId && this.plugin.settings.activeViewNav === "all" && this.plugin.settings.selectedQuadrant) {
+      await this.renderLists();
+      Object.entries(this.navEls).forEach(([, el]) => el.removeClass("active"));
+      this.listItemsEl?.querySelectorAll<HTMLDivElement>(".todo-nav-item").forEach((el) => el.removeClass("active"));
+      this.planGroupEl?.querySelectorAll<HTMLDivElement>(".todo-plan-item").forEach((el) => el.removeClass("active"));
+      this.quadrantGroupEl?.querySelectorAll<HTMLElement>(".todo-quadrant-item").forEach((el) => {
+        el.toggleClass("active", el.dataset.quadrant === this.plugin.settings.selectedQuadrant);
+      });
+      await this.renderTasks("all");
+      this.updateQuickPlaceholder();
+      this.updateHeaderInfo();
+      this.showMobilePanel("main");
+      return;
+    }
+    await this.activateNav(listId ? "all" : this.plugin.settings.activeViewNav);
+  }
+
 private async activateNav(nav: ViewNav): Promise<void> {
     this.closeDetail();
     this.taskListEl.removeClass("todo-life-active");
@@ -1143,7 +1255,14 @@ private async activateNav(nav: ViewNav): Promise<void> {
   }
 
   private async activateList(listId: string): Promise<void> {
+    if (!this.plugin.listService.getById(listId)) {
+      await this.activateNav("all");
+      return;
+    }
     this.closeDetail();
+    this.reviewFilter = null;
+    this.taskListEl.removeClass("todo-schedule-active", "todo-trash-active", "todo-review-active");
+    this.quickContainerEl.removeClass("todo-is-hidden");
     // A regular list is outside plan mode. Clear both runtime and persisted
     // state so quick-create creates a normal task in the selected list.
     this.plugin.settings.activeViewNav = "all";
@@ -1829,20 +1948,12 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
       await refreshMyDay();
     })(), "TodoView interaction"); });
 
-    // Auto-update myDayGroup based on time for tasks with dates
-    for (const t of tasks) {
-      if (t.startDate || t.dueDate) {
-        const autoGroup = getMyDayGroupFromTime(t.startDate, t.dueDate);
-        if (autoGroup !== (t.myDayGroup || "allday")) {
-          t.myDayGroup = autoGroup;
-          await this.plugin.taskService.update(t.id, { myDayGroup: autoGroup });
-        }
-      }
-    }
     const sorted = sortTasks(tasks, this.plugin.settings.sortConfig);
 
     MYDAY_GROUPS.forEach(({ key, label }) => {
-      const groupTasks = sorted.filter((t) => (t.myDayGroup || "allday") === key);
+      const groupTasks = sorted.filter((task) => (
+        task.startDate || task.dueDate ? getMyDayGroupFromTime(task.startDate, task.dueDate) : task.myDayGroup || "allday"
+      ) === key);
       const incomplete = groupTasks.filter((t) => !t.isCompleted);
       const completed = groupTasks.filter((t) => t.isCompleted);
 
@@ -2354,8 +2465,8 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
     return this.goalDashboardRenderer.renderGoalDashboard(kind, preserveScrollPosition);
   }
 
-  private renderLifePlanView(): Promise<void> {
-    return this.lifePlanRenderer.render(this.taskListEl, this.plugin.settings.birthday);
+  private renderLifePlanView(preserveScrollPosition = false): Promise<void> {
+    return this.lifePlanRenderer.render(this.taskListEl, this.plugin.settings.birthday, preserveScrollPosition);
   }
 
   private async openPlanTask(taskId: string): Promise<void> {

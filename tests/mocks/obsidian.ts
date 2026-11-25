@@ -6,6 +6,40 @@ export class TFile {
   }
 }
 
+export function normalizePath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+export class Component {
+  private loaded = false;
+  private cleanups: Array<() => void> = [];
+
+  load(): void {
+    if (this.loaded) return;
+    this.loaded = true;
+    this.onload();
+  }
+
+  unload(): void {
+    if (!this.loaded) return;
+    this.loaded = false;
+    this.onunload();
+    for (const cleanup of this.cleanups.splice(0)) cleanup();
+  }
+
+  onload(): void {}
+  onunload(): void {}
+
+  registerEvent(eventRef: { detach(): void }): void {
+    this.cleanups.push(() => eventRef.detach());
+  }
+
+  registerDomEvent(target: EventTarget, type: string, callback: EventListener): void {
+    target.addEventListener(type, callback);
+    this.cleanups.push(() => target.removeEventListener(type, callback));
+  }
+}
+
 export class TestElement {
   children: TestElement[] = [];
   textContent = "";
@@ -14,6 +48,7 @@ export class TestElement {
   dataset: Record<string, string> = {};
   style: { width?: string; height?: string; display?: string } = {};
   scrollTop = 0;
+  scrollLeft = 0;
   tabIndex = -1;
   parentElement: TestElement | null = null;
   private attributes = new Map<string, string>();
@@ -54,12 +89,33 @@ export class TestElement {
     };
   }
 
-  addClass(name: string): void {
-    this.className = `${this.className} ${name}`.trim();
+  addClass(...names: string[]): void {
+    this.className = `${this.className} ${names.join(" ")}`.trim();
   }
 
-  removeClass(name: string): void {
-    this.toggleClass(name, false);
+  removeClass(...names: string[]): void {
+    for (const name of names) this.toggleClass(name, false);
+  }
+
+  hasClass(name: string): boolean {
+    return this.className.split(/\s+/).includes(name);
+  }
+
+  get ownerDocument(): Document {
+    return document;
+  }
+
+  contains(element: unknown): boolean {
+    return this === element || this.children.some((child) => child.contains(element));
+  }
+
+  matches(selector: string): boolean {
+    return selector.split(",").some((part) => {
+      const item = part.trim();
+      if (item.startsWith(".")) return item.slice(1).split(".").every((name) => this.hasClass(name));
+      const attribute = item.match(/^\[([^=]+)='([^']+)'\]$/);
+      return attribute ? this.getAttribute(attribute[1]) === attribute[2] : this.tag === item;
+    });
   }
 
   setText(value: string): void {
@@ -164,9 +220,9 @@ export class TestElement {
     const visit = (element: TestElement) => {
       for (const child of element.children) {
         if (classes.some((part) => {
-          if (part.startsWith(".")) return child.className.split(/\s+/).includes(part.slice(1));
+          if (part.startsWith(".")) return child.matches(part);
           const attribute = part.match(/^\[([^=]+)="([^"]+)"\]$/);
-          return attribute ? child.getAttribute(attribute[1]) === attribute[2] : false;
+          return attribute ? child.getAttribute(attribute[1]) === attribute[2] : child.matches(part);
         })) matches.push(child);
         visit(child);
       }
@@ -185,6 +241,23 @@ export class TestElement {
   }
 }
 
+export class ItemView extends Component {
+  app: unknown;
+  containerEl = new TestElement();
+  contentEl: TestElement;
+
+  constructor(leaf: { app?: unknown }) {
+    super();
+    this.app = leaf.app;
+    this.containerEl.createDiv();
+    this.contentEl = this.containerEl.createDiv();
+  }
+}
+
+export class Plugin extends Component {
+  constructor(public app: unknown, public manifest: unknown) { super(); }
+}
+
 export class Modal {
   contentEl = new TestElement();
 
@@ -200,6 +273,10 @@ export class Modal {
   close(): void {
     this.onClose();
   }
+}
+
+export class SuggestModal<T> extends Modal {
+  getSuggestions(_query: string): T[] { return []; }
 }
 
 export class MenuItem {

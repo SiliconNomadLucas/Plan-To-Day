@@ -15,7 +15,7 @@ interface LifePlanCallbacks {
 export class LifePlanRenderer {
   constructor(private readonly callbacks: LifePlanCallbacks) {}
 
-  async render(root: HTMLDivElement, birthday: string): Promise<void> {
+  async render(root: HTMLDivElement, birthday: string, preserveScrollPosition = false): Promise<void> {
     root.empty();
     root.removeClass("todo-goal-active");
     root.addClass("todo-life-active");
@@ -75,7 +75,7 @@ export class LifePlanRenderer {
       for (const task of noAge) this.renderCard(content, task, tags, root, birthday);
     }
 
-    if (groups.has(ageNow)) {
+    if (!preserveScrollPosition && groups.has(ageNow)) {
       timeline.querySelector(".todo-life-node.is-current")?.scrollIntoView({ block: "center" });
     }
   }

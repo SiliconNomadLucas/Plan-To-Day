@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { TFile } from "obsidian";
 
+import { PersistentJsonService } from "../src/services/PersistentJsonService";
 import { StorageService } from "../src/services/StorageService";
 
 class FakeAdapter {
@@ -64,6 +66,16 @@ class FakeVault {
   }
 }
 
+class TestPersistentService extends PersistentJsonService {
+  constructor(vault: FakeVault) {
+    super(vault as never, "todo");
+  }
+
+  readSnapshot(filename: string) {
+    return this.readStoreFromDisk(filename);
+  }
+}
+
 describe("StorageService", () => {
   let vault: FakeVault;
   let storage: StorageService;
@@ -102,6 +114,111 @@ describe("StorageService", () => {
 
     await expect(storage.read("database.json")).rejects.toThrow();
     expect(vault.adapter.files.get("todo/database.json")).toBe("{ invalid json");
+  });
+
+  it("reads external changes without replacing the previously cached data", async () => {
+    await storage.write("database.json", { value: "local" });
+    const external = JSON.stringify({ data: { value: "synced" } });
+    vault.adapter.files.set("todo/database.json", external);
+    const write = vi.spyOn(vault.adapter, "write");
+
+    await expect(storage.readFresh("database.json")).resolves.toEqual({
+      status: "loaded", data: { value: "synced" },
+    });
+    await expect(storage.read("database.json")).resolves.toEqual({ value: "local" });
+    expect(vault.adapter.files.get("todo/database.json")).toBe(external);
+    expect(write).not.toHaveBeenCalled();
+
+    storage.clearCache();
+    await expect(storage.read("database.json")).resolves.toEqual({ value: "synced" });
+  });
+
+  it("bypasses the Vault index even when a TFile is already indexed", async () => {
+    const indexedFile = new TFile();
+    indexedFile.path = "todo/database.json";
+    const lookup = vi.spyOn(vault, "getAbstractFileByPath").mockReturnValue(indexedFile);
+    const read = vi.spyOn(vault, "read").mockResolvedValue(JSON.stringify({ data: "stale" }));
+    vault.adapter.files.set(indexedFile.path, JSON.stringify({ data: "synced" }));
+
+    await expect(storage.readFresh("database.json")).resolves.toEqual({
+      status: "loaded", data: "synced",
+    });
+    expect(lookup).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it("reads each fresh snapshot from disk without populating the normal cache", async () => {
+    vault.adapter.files.set("todo/database.json", JSON.stringify({ data: { value: 1 } }));
+    await expect(storage.readFresh("database.json")).resolves.toEqual({
+      status: "loaded", data: { value: 1 },
+    });
+
+    vault.adapter.files.set("todo/database.json", JSON.stringify({ data: { value: 2 } }));
+    await expect(storage.readFresh("database.json")).resolves.toEqual({
+      status: "loaded", data: { value: 2 },
+    });
+
+    vault.adapter.files.set("todo/database.json", JSON.stringify({ data: { value: 3 } }));
+    await expect(storage.read("database.json")).resolves.toEqual({ value: 3 });
+  });
+
+  it("reports a missing file without clearing cached data or creating a replacement", async () => {
+    await storage.write("database.json", { value: "local" });
+    vault.adapter.files.delete("todo/database.json");
+    const create = vi.spyOn(vault, "create");
+    const createFolder = vi.spyOn(vault, "createFolder");
+    const write = vi.spyOn(vault.adapter, "write");
+
+    await expect(storage.readFresh("database.json")).resolves.toEqual({ status: "missing" });
+    await expect(storage.read("database.json")).resolves.toEqual({ value: "local" });
+    expect(create).not.toHaveBeenCalled();
+    expect(createFolder).not.toHaveBeenCalled();
+    expect(write).not.toHaveBeenCalled();
+    expect(vault.adapter.files.has("todo/database.json")).toBe(false);
+  });
+
+  it.each([null, [], {}])("distinguishes an existing payload %j from a missing file", async (data) => {
+    vault.adapter.files.set("todo/database.json", JSON.stringify({ data }));
+
+    await expect(storage.readFresh("database.json")).resolves.toEqual({ status: "loaded", data });
+  });
+
+  it.each(["{ invalid json", "null", "[]", '"text"', "{}", '{"meta":{}}'])(
+    "rejects invalid fresh snapshots without losing cached data: %s",
+    async (raw) => {
+      await storage.write("database.json", { value: "local" });
+      vault.adapter.files.set("todo/database.json", raw);
+
+      await expect(storage.readFresh("database.json")).rejects.toThrow();
+      await expect(storage.read("database.json")).resolves.toEqual({ value: "local" });
+      expect(vault.adapter.files.get("todo/database.json")).toBe(raw);
+
+      vault.adapter.files.set("todo/database.json", JSON.stringify({ data: { value: "repaired" } }));
+      await expect(storage.readFresh("database.json")).resolves.toEqual({
+        status: "loaded", data: { value: "repaired" },
+      });
+    },
+  );
+
+  it("propagates disk read failures instead of reporting a missing file", async () => {
+    await storage.write("database.json", { value: "local" });
+    const error = new Error("simulated read failure");
+    vi.spyOn(vault.adapter, "read").mockRejectedValueOnce(error);
+
+    await expect(storage.readFresh("database.json")).rejects.toBe(error);
+    await expect(storage.read("database.json")).resolves.toEqual({ value: "local" });
+  });
+
+  it("exposes disk snapshots to services without running their initialization", async () => {
+    const service = new TestPersistentService(vault);
+    const createFolder = vi.spyOn(vault, "createFolder");
+    vault.adapter.files.set("todo/database.json", JSON.stringify({ data: { value: "synced" } }));
+
+    await expect(service.readSnapshot("database.json")).resolves.toEqual({
+      status: "loaded", data: { value: "synced" },
+    });
+    await expect(service.readSnapshot("missing.json")).resolves.toEqual({ status: "missing" });
+    expect(createFolder).not.toHaveBeenCalled();
   });
 
   it("keeps the first pre-change snapshot for the day instead of overwriting it", async () => {

@@ -2,6 +2,8 @@ import { Vault } from "obsidian";
 import { DomainTag, createTag, DEFAULT_DOMAIN_TAGS } from "../models/Tag";
 import { PersistentJsonService } from "./PersistentJsonService";
 import { logger } from "../utils/logger";
+import type { ServiceReloadResult } from "../models/ServiceReloadResult";
+import { isRecord, stableSerialize } from "../utils/validation";
 
 export interface TagStore {
   tags: DomainTag[];
@@ -11,6 +13,8 @@ const STORE_FILENAME = "tags.json";
 
 export class TagService extends PersistentJsonService {
   private tags: DomainTag[] = [];
+  private persistedTags = "[]";
+  private saveFailed = false;
 
   constructor(vault: Vault, folder: string) {
     super(vault, folder);
@@ -26,7 +30,31 @@ export class TagService extends PersistentJsonService {
         logger.info("No existing tags, starting fresh");
       }
       await this.ensureDefaultTags();
+      this.persistedTags = stableSerialize(this.tags);
+      this.saveFailed = false;
     });
+  }
+
+  hasUnsavedChanges(): boolean {
+    this.ensureLoaded();
+    return this.saveFailed || stableSerialize(this.tags) !== this.persistedTags;
+  }
+
+  async reloadFromDisk(): Promise<ServiceReloadResult> {
+    this.ensureLoaded();
+    if (this.hasUnsavedChanges()) return { status: "deferred", reason: "unsaved-changes" };
+    const snapshot = await this.readStoreFromDisk(STORE_FILENAME);
+    if (this.hasUnsavedChanges()) return { status: "deferred", reason: "unsaved-changes" };
+    if (snapshot.status === "missing") return { status: "missing" };
+    if (!isRecord(snapshot.data) || !Array.isArray(snapshot.data.tags) || !snapshot.data.tags.every(isDomainTag)) {
+      throw new Error("Invalid tags store: expected a valid tags array.");
+    }
+    const tags = snapshot.data.tags.map((tag) => ({ ...tag }));
+    if (stableSerialize(tags) === this.persistedTags) return { status: "unchanged" };
+    this.tags = tags;
+    this.persistedTags = stableSerialize(tags);
+    this.storage.clearCache();
+    return { status: "reloaded" };
   }
 
   getAll(): DomainTag[] {
@@ -93,8 +121,15 @@ export class TagService extends PersistentJsonService {
   }
 
   private async save(): Promise<void> {
-    const store: TagStore = { tags: this.tags };
-    await this.persistStore(STORE_FILENAME, store);
+    const tags = this.tags.map((tag) => ({ ...tag }));
+    try {
+      await this.persistStore(STORE_FILENAME, { tags });
+      this.persistedTags = stableSerialize(tags);
+      this.saveFailed = false;
+    } catch (error) {
+      this.saveFailed = true;
+      throw error;
+    }
   }
 
   private async ensureDefaultTags(): Promise<void> {
@@ -112,4 +147,16 @@ export class TagService extends PersistentJsonService {
   private ensureLoaded(): void {
     this.ensureInitialized("TagService");
   }
+}
+
+function isDomainTag(value: unknown): value is DomainTag {
+  if (!isRecord(value)) return false;
+  return typeof value.id === "string"
+    && typeof value.name === "string"
+    && typeof value.color === "string"
+    && typeof value.icon === "string"
+    && typeof value.sortOrder === "number"
+    && typeof value.isDefault === "boolean"
+    && typeof value.createdAt === "string"
+    && typeof value.updatedAt === "string";
 }

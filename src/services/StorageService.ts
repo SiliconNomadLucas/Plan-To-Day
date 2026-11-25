@@ -1,5 +1,7 @@
 import { Vault, TFile } from "obsidian";
+import type { StorageReadResult } from "../models/StorageReadResult";
 import { logger } from "../utils/logger";
+import { isRecord } from "../utils/validation";
 
 export interface StorageMeta {
   
@@ -83,6 +85,30 @@ export class StorageService {
   }
 
   
+  /** Read a disk snapshot without changing the cache; callers validate the payload before adopting it. */
+  async readFresh(filename: string): Promise<StorageReadResult> {
+    const path = this.getPath(filename);
+    try {
+      if (!(await this.vault.adapter.exists(path))) {
+        logger.debug("File not found during fresh read:", path);
+        return { status: "missing" };
+      }
+
+      // A sync replacement can arrive before Vault's file index is updated.
+      const raw = await this.vault.adapter.read(path);
+      const parsed: unknown = JSON.parse(raw);
+      if (!isRecord(parsed) || !Object.prototype.hasOwnProperty.call(parsed, "data")) {
+        throw new Error(`Invalid storage file: expected an object with a data field (${path}).`);
+      }
+
+      logger.debug("Read fresh from disk:", path);
+      return { status: "loaded", data: parsed.data };
+    } catch (error) {
+      logger.error("Failed to read fresh:", path, error);
+      throw error;
+    }
+  }
+
   async write<T>(filename: string, data: T): Promise<void> {
     const path = this.getPath(filename);
 
