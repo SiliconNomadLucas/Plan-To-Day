@@ -10,11 +10,25 @@ describe("task list selection", () => {
     const abandoned = createTask({ id: "abandoned", status: "abandoned" });
     const tasks = [active, completed, shelved, abandoned];
 
-    expect(filterTasksByStatus(tasks, "active").map((task) => task.id)).toEqual(["active"]);
-    expect(filterTasksByStatus(tasks, "completed").map((task) => task.id)).toEqual(["completed"]);
-    expect(filterTasksByStatus(tasks, "shelved").map((task) => task.id)).toEqual(["shelved"]);
-    expect(filterTasksByStatus(tasks, "abandoned").map((task) => task.id)).toEqual(["abandoned"]);
-    expect(filterTasksByStatus(tasks, "all")).toBe(tasks);
+    expect(filterTasksByStatus(tasks, "active", "2026-11-10").map((task) => task.id)).toEqual(["active"]);
+    expect(filterTasksByStatus(tasks, "completed", "2026-11-10").map((task) => task.id)).toEqual(["completed"]);
+    expect(filterTasksByStatus(tasks, "shelved", "2026-11-10").map((task) => task.id)).toEqual(["shelved"]);
+    expect(filterTasksByStatus(tasks, "abandoned", "2026-11-10").map((task) => task.id)).toEqual(["abandoned"]);
+    expect(filterTasksByStatus(tasks, "all", "2026-11-10")).toBe(tasks);
+  });
+
+  it("separates active tasks from tasks whose due date has arrived", () => {
+    const noDeadline = createTask({ id: "no-deadline" });
+    const future = createTask({ id: "future", dueDate: "2026-11-11T09:00:00" });
+    const dueToday = createTask({ id: "today", dueDate: "2026-11-10T23:30:00" });
+    const overdue = createTask({ id: "overdue", dueDate: "2026-11-09T09:00:00" });
+    const completed = createTask({ id: "completed-overdue", dueDate: "2026-11-09T09:00:00", isCompleted: true });
+    const tasks = [noDeadline, future, dueToday, overdue, completed];
+
+    expect(filterTasksByStatus(tasks, "active", "2026-11-10").map((task) => task.id))
+      .toEqual(["no-deadline", "future"]);
+    expect(filterTasksByStatus(tasks, "overdue", "2026-11-10").map((task) => task.id))
+      .toEqual(["today", "overdue"]);
   });
 
   it("hides future instances while an earlier instance is pending", () => {

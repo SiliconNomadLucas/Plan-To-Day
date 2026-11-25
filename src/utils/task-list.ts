@@ -3,13 +3,26 @@ import { extractLocalDate } from "./recurrence";
 
 export function filterTasksByStatus(
   tasks: Task[],
-  status: "all" | "completed" | TaskStatus,
+  status: "all" | "completed" | "overdue" | TaskStatus,
+  today: string,
 ): Task[] {
   if (status === "all") return tasks;
   if (status === "completed") return tasks.filter((task) => task.isCompleted);
   if (status === "shelved") return tasks.filter((task) => task.status === "shelved");
   if (status === "abandoned") return tasks.filter((task) => task.status === "abandoned");
-  return tasks.filter((task) => !task.isCompleted && task.status === "active");
+  if (status === "overdue") {
+    return tasks.filter((task) =>
+      !task.isCompleted
+      && task.status === "active"
+      && !!task.dueDate
+      && extractLocalDate(task.dueDate) <= today,
+    );
+  }
+  return tasks.filter((task) =>
+    !task.isCompleted
+    && task.status === "active"
+    && (!task.dueDate || extractLocalDate(task.dueDate) > today),
+  );
 }
 
 /**

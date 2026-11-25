@@ -238,7 +238,7 @@ export interface TodoPluginLike {
     quadrantGroupCollapsed: boolean;
     activeScheduleMode: "day" | "week" | "month";
     activeReviewMode: "day" | "week" | "month" | "year";
-    taskFilterStatus: "all" | "active" | "shelved" | "abandoned" | "completed";
+    taskFilterStatus: "all" | "active" | "completed" | "overdue" | "shelved" | "abandoned";
     goalViewMode: "card" | "list";
     showLunarCalendar: boolean;
     showDailyRecurringInDaySchedule: boolean;
@@ -260,7 +260,7 @@ export class TodoView extends ItemView {
   private taskListEl!: HTMLDivElement;
   private sortBtnEl!: HTMLButtonElement;
   private sortLabelEl!: HTMLSpanElement;
-  private filterBtnEl!: HTMLButtonElement;
+  private statusFilterEl!: HTMLDivElement;
   private aiBtnEl!: HTMLButtonElement;
   private headerIconEl!: HTMLSpanElement;
   private headerTitleEl!: HTMLSpanElement;
@@ -466,11 +466,45 @@ export class TodoView extends ItemView {
     setIcon(this.sortBtnEl, "arrow-up-down");
     this.sortLabelEl = this.sortBtnEl.createSpan({ text: this.getSortLabel(this.plugin.settings.sortConfig.primary.field) });
     this.sortBtnEl.addEventListener("click", (ev) => this.showSortMenu(ev));
-    this.filterBtnEl = taskHeader.createEl("button", { cls: "todo-sort-btn todo-filter-btn" });
-    setIcon(this.filterBtnEl, "filter");
-    this.filterBtnEl.title = t("状态筛选");
-    this.filterBtnEl.setAttribute("aria-label", t("状态筛选"));
-    this.filterBtnEl.addEventListener("click", (ev) => this.showStatusFilterMenu(ev));
+    this.statusFilterEl = taskHeader.createDiv({ cls: "todo-goal-mode-switch todo-task-status-switch" });
+    const statusOptions: Array<[TodoPluginLike["settings"]["taskFilterStatus"], string]> = [
+      ["all", "全部"],
+      ["active", "进行中"],
+      ["completed", "已完成"],
+      ["overdue", "已过期"],
+      ["shelved", "已搁置"],
+      ["abandoned", "已放弃"],
+    ];
+    for (const [status, label] of statusOptions) {
+      const button = this.statusFilterEl.createSpan({
+        cls: "todo-goal-mode-btn todo-task-status-btn" + (this.plugin.settings.taskFilterStatus === status ? " active" : ""),
+        text: t(label),
+      });
+      button.setAttribute("role", "button");
+      button.setAttribute("tabindex", "0");
+      button.setAttribute("aria-pressed", String(this.plugin.settings.taskFilterStatus === status));
+      const selectStatus = () => {
+        if (this.plugin.settings.taskFilterStatus === status) return;
+        this.plugin.settings.taskFilterStatus = status;
+        for (const sibling of Array.from(this.statusFilterEl.querySelectorAll<HTMLElement>(".todo-task-status-btn"))) {
+          const isActive = sibling === button;
+          sibling.toggleClass("active", isActive);
+          sibling.setAttribute("aria-pressed", String(isActive));
+        }
+        runAsyncAction((async () => {
+          await this.plugin.saveSettings();
+          const view = this.plugin.settings.selectedListId ? "list" : this.plugin.settings.activeViewNav;
+          await this.renderTasks(view);
+        })(), "status filter interaction");
+      };
+      button.addEventListener("click", selectStatus);
+      button.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          selectStatus();
+        }
+      });
+    }
     this.aiBtnEl = taskHeader.createEl("button", { cls: "todo-sort-btn todo-ai-btn" });
     setIcon(this.aiBtnEl, "list-checks");
     this.aiBtnEl.addClass("todo-is-hidden");
@@ -1069,16 +1103,13 @@ export class TodoView extends ItemView {
 
 
     // Show task suggestions only in My Day, sort/filter buttons in task views.
-    if (this.aiBtnEl && this.sortBtnEl && this.filterBtnEl) {
+    if (this.aiBtnEl && this.sortBtnEl && this.statusFilterEl) {
       const isMyday = activeViewNav === "myday" && !selectedListId;
       const isTaskView = activeViewNav === "all" || activeViewNav === "inbox" || !!selectedListId;
       this.aiBtnEl.toggleClass("todo-is-hidden", !isMyday);
       this.aiBtnEl.title = t("待办事项推荐");
       this.aiBtnEl.setAttribute("aria-label", t("待办事项推荐"));
-      this.filterBtnEl.toggleClass("todo-is-hidden", !isTaskView);
-      this.filterBtnEl.style.marginLeft = isMyday ? "auto" : "4px";
-      this.filterBtnEl.title = t("状态筛选");
-      this.filterBtnEl.setAttribute("aria-label", t("状态筛选"));
+      this.statusFilterEl.toggleClass("todo-is-hidden", !isTaskView);
       if (isMyday) this.sortBtnEl.addClass("todo-is-hidden");
     }
 
@@ -1644,30 +1675,6 @@ private async activateNav(nav: ViewNav): Promise<void> {
     menu.showAtMouseEvent(ev);
   }
 
-  private showStatusFilterMenu(ev: MouseEvent): void {
-    const options: Array<[TodoPluginLike["settings"]["taskFilterStatus"], string, string]> = [
-      ["active", "进行中", "circle-dot"],
-      ["all", "全部", "list"],
-      ["completed", "已完成", "check-circle-2"],
-      ["shelved", "已搁置", "pause-circle"],
-      ["abandoned", "已放弃", "x-circle"],
-    ];
-    const menu = new Menu();
-    for (const [status, label, icon] of options) {
-      menu.addItem((item) => item
-        .setTitle(t(label))
-        .setIcon(icon)
-        .setChecked(this.plugin.settings.taskFilterStatus === status)
-        .onClick(async () => {
-          this.plugin.settings.taskFilterStatus = status;
-          await this.plugin.saveSettings();
-          const view = this.plugin.settings.selectedListId ? "list" : this.plugin.settings.activeViewNav;
-          await this.renderTasks(view);
-        }));
-    }
-    menu.showAtMouseEvent(ev);
-  }
-
   private getTaskMyDayDate(task: Task): string | null {
     return task.dueDate ? extractLocalDate(task.dueDate) : task.startDate ? extractLocalDate(task.startDate) : null;
   }
@@ -1719,7 +1726,7 @@ private async activateNav(nav: ViewNav): Promise<void> {
     tasks = view === "myday"
       ? hideFutureRecurrenceInstances(tasks, localTodayStr())
       : hideFutureRecurrenceInstances(
-        filterTasksByStatus(tasks, this.plugin.settings.taskFilterStatus || "active"),
+        filterTasksByStatus(tasks, this.plugin.settings.taskFilterStatus || "active", localTodayStr()),
         localTodayStr(),
       );
 
@@ -1768,6 +1775,11 @@ private async activateNav(nav: ViewNav): Promise<void> {
     }
 
     const sorted = sortTasks(tasks, this.plugin.settings.sortConfig);
+    const taskFilterStatus = this.plugin.settings.taskFilterStatus || "active";
+    if (taskFilterStatus === "all" || taskFilterStatus === "completed" || taskFilterStatus === "overdue") {
+      sorted.forEach((task) => this.renderTaskRow(this.taskListEl, task, currentView));
+      return;
+    }
     const today = new Date();
     const todayStr = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
     const overdue = sorted.filter((t) => !t.isCompleted && t.dueDate && extractLocalDate(t.dueDate) < todayStr);
@@ -1800,23 +1812,11 @@ private async activateNav(nav: ViewNav): Promise<void> {
     if (completed.length) {
       const group = this.taskListEl.createDiv({ cls: "todo-completed-group" });
       const header = group.createDiv({ cls: "todo-completed-header" });
-      const arrow = header.createSpan({
-        cls: `todo-completed-arrow${this.plugin.settings.completedCollapsed ? " collapsed" : ""}`,
-        text: "▼",
-      });
+      header.createSpan({ cls: "todo-completed-arrow", text: "▼" });
       header.createSpan({ cls: "todo-completed-label", text: `已完成 ${completed.length}` });
 
       const list = group.createDiv({ cls: "todo-completed-list" });
-      list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
-
       completed.forEach((task) => this.renderTaskRow(list, task, currentView));
-
-      header.addEventListener("click", () => { runAsyncAction((async () => {
-        this.plugin.settings.completedCollapsed = !this.plugin.settings.completedCollapsed;
-        await this.plugin.saveSettings();
-        list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
-        arrow.toggleClass("collapsed", this.plugin.settings.completedCollapsed);
-      })(), "TodoView interaction"); });
     }
   }
 
@@ -1825,6 +1825,7 @@ private async activateNav(nav: ViewNav): Promise<void> {
       filterTasksByStatus(
         this.plugin.taskService.getAll().filter((task) => !task.planKind || this.isScheduledWeekPlan(task)),
         this.plugin.settings.taskFilterStatus || "active",
+        localTodayStr(),
       ),
       localTodayStr(),
     );
@@ -1841,24 +1842,7 @@ private async activateNav(nav: ViewNav): Promise<void> {
       if (selectedTag) {
         const tasks = allTasks.filter((t) => t.tags.includes(selectedTag.id));
         const sorted = sortTasks(tasks, config);
-        const incomplete = sorted.filter((t) => !t.isCompleted);
-        const completed = sorted.filter((t) => t.isCompleted);
-        incomplete.forEach((task) => this.renderTaskRow(this.taskListEl, task, "all"));
-        if (completed.length) {
-          const group = this.taskListEl.createDiv({ cls: "todo-completed-group" });
-          const header = group.createDiv({ cls: "todo-completed-header" });
-          const arrow = header.createSpan({ cls: "todo-completed-arrow" + (this.plugin.settings.completedCollapsed ? " collapsed" : ""), text: "\u25bc" });
-          header.createSpan({ cls: "todo-completed-label", text: "\u5df2\u5b8c\u6210 " + completed.length });
-          const list = group.createDiv({ cls: "todo-completed-list" });
-          list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
-          completed.forEach((task) => this.renderTaskRow(list, task, "all"));
-          header.addEventListener("click", () => { runAsyncAction((async () => {
-            this.plugin.settings.completedCollapsed = !this.plugin.settings.completedCollapsed;
-            await this.plugin.saveSettings();
-            list.toggleClass("todo-is-hidden", this.plugin.settings.completedCollapsed);
-            arrow.toggleClass("collapsed", this.plugin.settings.completedCollapsed);
-          })(), "TodoView interaction"); });
-        }
+        sorted.forEach((task) => this.renderTaskRow(this.taskListEl, task, "all"));
       }
       return;
     }
@@ -1876,18 +1860,15 @@ private async activateNav(nav: ViewNav): Promise<void> {
       if (!tag) continue;
       const tasks = allTasks.filter((t) => t.tags.includes(tag.id));
       const sorted = sortTasks(tasks, config);
-      const incomplete = sorted.filter((t) => !t.isCompleted);
-      const completed = sorted.filter((t) => t.isCompleted);
 
       const groupEl = this.taskListEl.createDiv({ cls: "todo-myday-group" });
       const headerEl = groupEl.createDiv({ cls: "todo-myday-group-header" });
       if (qd.color) headerEl.style.borderLeft = "3px solid " + qd.color;
       headerEl.createSpan({ cls: "todo-myday-group-label", text: qd.name });
-      headerEl.createSpan({ cls: "todo-myday-group-count", text: incomplete.length + "" });
+      headerEl.createSpan({ cls: "todo-myday-group-count", text: sorted.length + "" });
 
       const listEl = groupEl.createDiv({ cls: "todo-myday-group-list" });
-      incomplete.forEach((task) => this.renderTaskRow(listEl, task, "all"));
-      completed.forEach((task) => this.renderTaskRow(listEl, task, "all"));
+      sorted.forEach((task) => this.renderTaskRow(listEl, task, "all"));
     }
 
     // Ungrouped tasks
@@ -1972,10 +1953,6 @@ private async renderMyDayGroups(tasks: Task[]): Promise<void> {
   refreshLanguageLabels(): void {
     if (this.sortLabelEl) {
       this.sortLabelEl.setText(this.getSortLabel(this.plugin.settings.sortConfig.primary.field));
-    }
-    if (this.filterBtnEl) {
-      this.filterBtnEl.title = t("状态筛选");
-      this.filterBtnEl.setAttribute("aria-label", t("状态筛选"));
     }
     const setItemLabel = (key: ViewNav, label: string) => {
       const item = this.navEls[key];

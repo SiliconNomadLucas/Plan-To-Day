@@ -4008,7 +4008,11 @@
 
 .todo-sort-btn {
   margin-left: auto;
-  font-size: 14px;
+  font-size: 12px;
+  min-height: 0;
+  height: 26px;
+  box-sizing: border-box;
+  padding-block: 0;
 }
 
 /* ========== Tag Edit Icon Grid ========== */
@@ -4112,10 +4116,13 @@
 .todo-goal-nav-label{font-size:14px;font-weight:600;color:var(--text-normal)}
 .todo-goal-nav-back{font-size:12px}
 .todo-goal-mode-switch{display:flex;border:1px solid var(--background-modifier-border);border-radius:var(--radius-s);overflow:hidden;margin-left:auto}
-.todo-goal-mode-btn{padding:4px 12px;font-size:12px;cursor:pointer;border-right:1px solid var(--background-modifier-border);color:var(--text-muted);background:none}
+.todo-goal-mode-btn{display:flex;align-items:center;height:26px;box-sizing:border-box;padding:4px 12px;font-size:12px;cursor:pointer;border-right:1px solid var(--background-modifier-border);color:var(--text-muted);background:none}
 .todo-goal-mode-btn:last-child{border-right:none}
 .todo-goal-mode-btn:hover{background:var(--background-modifier-hover)}
 .todo-goal-mode-btn.active{background:var(--interactive-accent);color:var(--text-on-accent)}
+.todo-task-status-switch{margin-left:auto;flex:0 1 auto;min-width:0}
+.todo-task-status-btn{white-space:nowrap}
+.todo-task-header{flex-wrap:wrap}
 .todo-goal-stats{color:var(--text-muted);font-size:12px;padding-bottom:8px}
 .todo-goal-placeholder{color:var(--text-muted);font-size:12px;padding:8px 0}
 /* ===== Goal Plan Stats Row (step 3) ===== */

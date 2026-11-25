@@ -29,7 +29,7 @@ export interface ObsidianTodoSettings {
   quadrantGroupCollapsed: boolean;
   activeScheduleMode: "day" | "week" | "month";
   activeReviewMode: "day" | "week" | "month" | "year";
-  taskFilterStatus: "all" | "active" | "shelved" | "abandoned" | "completed";
+  taskFilterStatus: "all" | "active" | "completed" | "overdue" | "shelved" | "abandoned";
   goalViewMode: "card" | "list";
   showLunarCalendar: boolean;
   showDailyRecurringInDaySchedule: boolean;

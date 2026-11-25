@@ -307,6 +307,7 @@ const translations: Record<string, string> = {
   "目标数": "Goals",
   "进行中": "In Progress",
   "逾期": "Overdue",
+  "已过期": "Expired",
   "完成率": "Completion Rate",
   "卡片": "Cards",
   "列表": "List",
