@@ -480,16 +480,12 @@ export class TodoView extends ItemView {
         cls: "todo-goal-mode-btn todo-task-status-btn" + (this.plugin.settings.taskFilterStatus === status ? " active" : ""),
         text: t(label),
       });
-      button.setAttribute("role", "button");
-      button.setAttribute("tabindex", "0");
-      button.setAttribute("aria-pressed", String(this.plugin.settings.taskFilterStatus === status));
       const selectStatus = () => {
         if (this.plugin.settings.taskFilterStatus === status) return;
         this.plugin.settings.taskFilterStatus = status;
         for (const sibling of Array.from(this.statusFilterEl.querySelectorAll<HTMLElement>(".todo-task-status-btn"))) {
           const isActive = sibling === button;
           sibling.toggleClass("active", isActive);
-          sibling.setAttribute("aria-pressed", String(isActive));
         }
         runAsyncAction((async () => {
           await this.plugin.saveSettings();
@@ -498,12 +494,6 @@ export class TodoView extends ItemView {
         })(), "status filter interaction");
       };
       button.addEventListener("click", selectStatus);
-      button.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          selectStatus();
-        }
-      });
     }
     this.aiBtnEl = taskHeader.createEl("button", { cls: "todo-sort-btn todo-ai-btn" });
     setIcon(this.aiBtnEl, "list-checks");

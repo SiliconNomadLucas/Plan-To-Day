@@ -4123,6 +4123,10 @@
 .todo-task-status-switch{margin-left:auto;flex:0 1 auto;min-width:0}
 .todo-task-status-btn{white-space:nowrap}
 .todo-task-header{flex-wrap:wrap}
+@media (min-width: 601px){
+  .todo-task-status-switch{order:1;margin-left:auto}
+  .todo-task-header > .todo-sort-btn:not(.todo-ai-btn){order:2;margin-left:4px}
+}
 .todo-goal-stats{color:var(--text-muted);font-size:12px;padding-bottom:8px}
 .todo-goal-placeholder{color:var(--text-muted);font-size:12px;padding:8px 0}
 /* ===== Goal Plan Stats Row (step 3) ===== */

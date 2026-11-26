@@ -25,7 +25,6 @@ export class GoalDashboardRenderer {
   periodKey: string | null = null;
   private expandedGoalIds = new Set<string>();
   private goalRenderToken = 0;
-  private goalKeyHandler: ((event: KeyboardEvent) => void) | null = null;
 
   constructor(
     private readonly plugin: TodoPluginLike,
@@ -46,8 +45,6 @@ export class GoalDashboardRenderer {
 
   dispose(): void {
     this.goalRenderToken++;
-    if (this.goalKeyHandler) document.removeEventListener("keydown", this.goalKeyHandler);
-    this.goalKeyHandler = null;
   }
 
   async renderGoalDashboard(kind: "year"|"month", preserveScrollPosition = false): Promise<void> {
@@ -65,7 +62,6 @@ export class GoalDashboardRenderer {
     const periodKey = this.periodKey;
     const isCurrentRender = () => this.goalRenderToken === renderToken && this.periodKey === periodKey;
     this.quickContainerEl.toggleClass("todo-is-hidden", this.plugin.settings.goalViewMode === "list");
-    if (this.goalKeyHandler) { document.removeEventListener("keydown", this.goalKeyHandler); this.goalKeyHandler = null; }
 
     const stickyHeader = this.taskListEl.createDiv({ cls: "todo-goal-sticky-header" });
     const goalContent = this.taskListEl.createDiv({ cls: "todo-goal-scroll-content" });
@@ -95,12 +91,6 @@ export class GoalDashboardRenderer {
       updateLabel();
       runAsyncAction(this.renderGoalDashboard(kind), "return to current goal period");
     });
-    this.goalKeyHandler = (e: KeyboardEvent) => {
-      if (!(this.plugin.settings.activeViewNav === "plan" && (this.activePlanKind === "year" || this.activePlanKind === "month"))) return;
-      if (e.key === "ArrowLeft") { e.preventDefault(); shift(-1); }
-      if (e.key === "ArrowRight") { e.preventDefault(); shift(1); }
-    };
-    document.addEventListener("keydown", this.goalKeyHandler);
 
     const goalAllTasks = this.plugin.taskService.getAll();
     const periodTasks = goalAllTasks.filter((t) => t.planKind === kind && t.planPeriodKey === periodKey && !t.isDeleted && !t.isRecurrenceTemplate);
@@ -361,7 +351,6 @@ export class GoalDashboardRenderer {
       const body = card.createDiv({ cls: "todo-goal-card-body todo-goal-card-body-collapsed" });
       let bodyRendered = false;
       const openGoal = () => this.host.openTask(goal.id);
-      card.addEventListener("keydown", (ev) => { if (ev.key === "Enter") { ev.preventDefault(); void openGoal(); } });
       expandBtn.addEventListener("click", (ev) => {
         ev.stopPropagation();
         const collapsed = body.classList.contains("todo-goal-card-body-collapsed");
