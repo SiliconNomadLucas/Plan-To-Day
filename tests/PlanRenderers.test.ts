@@ -134,8 +134,8 @@ describe("plan renderers", () => {
     expect(openTask).toHaveBeenCalledWith("year-goal");
 
     renderer.dispose();
-    expect(addListener).toHaveBeenCalledWith("keydown", expect.any(Function));
-    expect(removeListener).toHaveBeenCalledWith("keydown", expect.any(Function));
+    expect(addListener).not.toHaveBeenCalled();
+    expect(removeListener).not.toHaveBeenCalled();
   });
 
   it("creates a linked monthly goal when a quarter goal is dropped on the drop zone", async () => {

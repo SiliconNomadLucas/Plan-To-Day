@@ -121,6 +121,7 @@ import { TaskDetailView, ScheduleSidebarItem } from "./TaskDetailView";
 import type { RecurrenceSeriesService } from "../services/RecurrenceSeriesService";
 import { AIRecommendationView } from "./AIRecommendationView";
 import { TodoDetailSidebarView, VIEW_TYPE_TODO_DETAIL } from "./TodoDetailSidebarView";
+import { TodoNavView, VIEW_TYPE_TODO_NAV } from "./TodoNavView";
 import { sortTasks, getMyDayGroupFromTime } from "../utils/sort";
 import type { SortConfig, SortField, SortDirection } from "../utils/sort";
 import { IconPickerModal } from "../ui/IconPickerModal";
@@ -305,6 +306,7 @@ export class TodoView extends ItemView {
   private _lastDragMoved = false;
   private touchStartX: number | null = null;
   private touchStartY: number | null = null;
+  private touchStartedAtLeftEdge = false;
   private touchStartedInHorizontalScroll = false;
   private _onTouchStart: ((ev: TouchEvent) => void) | null = null;
   private _onTouchEnd: ((ev: TouchEvent) => void) | null = null;
@@ -421,6 +423,7 @@ export class TodoView extends ItemView {
       if (!this.isMobile() || !ev.touches.length) return;
       this.touchStartX = ev.touches[0].clientX;
       this.touchStartY = ev.touches[0].clientY;
+      this.touchStartedAtLeftEdge = this.touchStartX <= 32;
       this.touchStartedInHorizontalScroll = ev.target instanceof Element && !!ev.target.closest(".todo-goal-quarter-scroll");
     };
     this._onTouchEnd = (ev: TouchEvent) => {
@@ -428,12 +431,18 @@ export class TodoView extends ItemView {
       const touch = ev.changedTouches[0];
       const dx = touch.clientX - this.touchStartX;
       const dy = touch.clientY - this.touchStartY;
+      const startedAtLeftEdge = this.touchStartedAtLeftEdge;
       const startedInHorizontalScroll = this.touchStartedInHorizontalScroll;
       this.touchStartX = null;
       this.touchStartY = null;
+      this.touchStartedAtLeftEdge = false;
       this.touchStartedInHorizontalScroll = false;
       if (startedInHorizontalScroll) return;
-      if (dx > -60 || Math.abs(dx) < Math.abs(dy)) return;
+      if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy)) return;
+      if (dx > 0) {
+        if (startedAtLeftEdge) runAsyncAction(this.openMobileNavigationSidebar(), "reveal mobile navigation");
+        return;
+      }
       // The shared detail root can be replaced by task/goal details while the
       // AI view instance still exists. Check the rendered panel as the source
       // of truth so a stale provider state cannot block mobile gestures.
@@ -918,6 +927,20 @@ export class TodoView extends ItemView {
     if (!this.isMobileEnvironment() || !this.mobileDetailLeaf) return;
     this.app.workspace.rightSplit.expand();
     runAsyncAction(this.app.workspace.revealLeaf(this.mobileDetailLeaf), "reveal task details");
+  }
+
+  private async openMobileNavigationSidebar(): Promise<void> {
+    if (!this.isMobileEnvironment()) return;
+    let leaf = this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO_NAV)[0];
+    if (!leaf) {
+      leaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE_TODO_NAV, "left", { active: false, reveal: false });
+    }
+    if (!leaf) return;
+    await leaf.setViewState({ type: VIEW_TYPE_TODO_NAV, active: false });
+    if (!(leaf.view instanceof TodoNavView)) return;
+    await leaf.view.renderNav();
+    this.app.workspace.leftSplit.expand();
+    await this.app.workspace.revealLeaf(leaf);
   }
 
   private collapseMobileDetailSidebar(): void {

@@ -135,13 +135,12 @@ export default class ObsidianTodoPlugin extends Plugin {
   }
 
   private async openStartupViews(): Promise<void> {
-    if (!this.settings.autoOpenOnStartup) return;
     // The desktop view already contains its own navigation; the side navigation is mobile-only.
     const isMobile = window.innerWidth <= 600 || document.body.hasClass("is-mobile");
     if (isMobile) {
       const navLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_TODO_NAV);
       if (!navLeaves.length) {
-        const navLeaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE_TODO_NAV, "left", { active: false, reveal: true });
+        const navLeaf = await this.app.workspace.ensureSideLeaf(VIEW_TYPE_TODO_NAV, "left", { active: false, reveal: false });
         if (navLeaf) {
           await navLeaf.setViewState({ type: VIEW_TYPE_TODO_NAV, active: false });
         }
@@ -151,6 +150,7 @@ export default class ObsidianTodoPlugin extends Plugin {
         leaf.detach();
       }
     }
+    if (!this.settings.autoOpenOnStartup) return;
     await this.activateView();
   }
 
