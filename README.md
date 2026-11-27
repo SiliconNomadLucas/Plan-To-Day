@@ -45,9 +45,9 @@ Source layout: `src/models/` for data models, `src/services/` for persistence an
 
 ## Release process
 
-1. Commit and push the code to `main`.
-2. Push a new `major.minor.patch` tag (for example, `0.1.11`) to that commit, without a `v` prefix. Do not reuse an existing tag.
-3. The tag workflow syncs release metadata to the tag, runs the build, tests, and validation, then creates a GitHub Release containing `main.js`, `manifest.json`, and `styles.css`.
+1. Run `npm run version -- <next-version>` to update `package.json`, `package-lock.json`, `manifest.json`, and `versions.json` together.
+2. Run `npm run release:check`, then commit and push the code and version metadata to `main`.
+3. Push a new tag matching the manifest version (for example, `0.1.14`, without a `v` prefix). CI validates the committed version, builds and tests the plugin, then creates a GitHub Release with `main.js`, `manifest.json`, and `styles.css`.
 
 Do not retag or replace an existing public release to publish new code.
 

@@ -141,9 +141,9 @@ src/
 
 发布流程：
 
-1. 将代码提交并推送到 `main`。
-2. 在该提交上推送一个新的 `major.minor.patch` 标签（例如 `0.1.11`，不带 `v` 前缀），不要重复使用已有标签。
-3. 标签工作流会自动将发布元数据同步为标签版本，然后执行构建、测试和校验；通过后自动创建 GitHub Release，并附上 `main.js`、`manifest.json` 和 `styles.css`。
+1. 执行 `npm run version -- <next-version>`，同步更新 `package.json`、`package-lock.json`、`manifest.json` 和 `versions.json`。
+2. 执行 `npm run release:check`，然后将代码和版本元数据提交并推送到 `main`。
+3. 推送与 manifest 版本完全一致的新标签（例如 `0.1.14`，不带 `v` 前缀）。CI 会校验已提交的版本、构建并测试插件，通过后自动创建 GitHub Release，附上 `main.js`、`manifest.json` 和 `styles.css`。
 
 本地可用 `npm run release:check` 完整预演发布门禁。该命令不创建标签或发布版本。
 
@@ -178,7 +178,7 @@ src/
 
 ## 项目状态
 
-当前开发版本：`0.1.6`（尚未发布）
+当前准备发布的版本：`0.1.14`
 
 核心任务管理、计划视图、日程视图、复盘统计、回收站、重复任务、移动端侧栏和本地待办事项推荐已经实现，项目仍处于持续完善阶段。
 
